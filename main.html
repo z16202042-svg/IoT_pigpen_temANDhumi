@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script type="module"> 
+        // Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyCRGbyb9E_lqImTlZAK7T-nk6HEUqLqBuA",
+  authDomain: "my-esp32-project-3b1a5.firebaseapp.com",
+  databaseURL: "https://my-esp32-project-3b1a5-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "my-esp32-project-3b1a5",
+  storageBucket: "my-esp32-project-3b1a5.firebasestorage.app",
+  messagingSenderId: "662857171235",
+  appId: "1:662857171235:web:5d96d45284d34386188c96",
+  measurementId: "G-7R4ZRNR40M"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+
+// tem
+const temperatureRef = ref(database, "sensor/temperature");
+onValure (temperatureRef, (snapshot)=>{
+    const temperature = snapshot.val();
+
+    documment.getElementById("temperature").textContent = temperature + " °C"
+});
+// hum
+const humidityRef = ref(database, "sensor/humidity");
+onValure (humidityRef, (snapshot)=>{
+    const humidity = snapshot.val();
+
+    documment.getElementById("humidity").textContent = humidity + " %"
+});
+    </script>
+
+</head>
+<body>
+    <div style=" display: flex;
+    flex-direction: row;
+    gap: 40px;">
+        <div style="background-color: azure; width: 250px;  height: 100px ;">
+<p style="color: black; font-size: 30px; text-align: center;">Temperature:</p>
+        </div>
+        <div style="background-color: azure; width: 250px;  height: 100px ;">
+<p style="color: black; font-size: 30px; text-align: center;">Humidity:</p>
+        </div>
+    </div>
+</body>
+</html>
