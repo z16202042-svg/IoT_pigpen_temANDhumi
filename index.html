@@ -42,7 +42,7 @@ onValue(temperatureRef, (snapshot) => {
     console.log("Temperature:", temperature);
 
     document.getElementById("temperature").textContent =
-        "Temperature: " + temperature + " °C";
+        "Temperature: " + temperature + "°C";
 
 });
 
@@ -58,24 +58,71 @@ onValue(humidityRef, (snapshot) => {
     console.log("Humidity:", humidity);
 
     document.getElementById("humidity").textContent =
-        "Humidity: " + humidity + " %";
+        "Humidity:" + humidity + "%";
 
 });
+window.showThreshold = function() {
+    document.getElementById("thresholdBox").style.display = "block";
+}
+window.saveThreshold = function() {
+    const temp = document.getElementById("tempthreshold").value;
+    const humidity = document.getElementById("humidityThreshold").value;
 
+    console.log("temperature threshold: ", temp);
+    console.log("humidity threshold: ", humidity);
+    document.getElementById("thresholdBox").style.display = "none";
+};
     </script>
 
 </head>
 <body>
-    <div style=" display: flex;
-    flex-direction: row;
-    gap: 40px;">
-        <div style="background-color: azure; width: 250px;  height: 100px ;">
-<h2 style="color: black; font-size: 30px; text-align: center;" id="temperature">  Temperature:</h2>
+  <div style="text-align:center;">
+
+    <div style="display:flex; justify-content:center; gap:40px;">
+
+        <div style="background-color:azure; width:250px; height:80px;">
+            <h2 id="temperature" style="text-align: center;">Temperature</h2>
+           
         </div>
-        <div style="background-color: azure; width: 250px;  height: 100px ;">
-<h2 style="color: black; font-size: 30px; text-align: center;" id="humidity">  
-    Humidity:</h2>
+
+        <div style="background-color:azure; width:250px; height:80px;">
+            <h2 id="humidity" style="text-align: center;">Humidity</h2>
         </div>
+
     </div>
+<button onclick="showThreshold()" style="margin-top: 20px; padding: 10px 25px;">
+    Set Threshold
+</button>
+  <div id="thresholdBox" style="
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  background:whitesmoke;
+  padding: 25px;
+  width: 300px;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px #999;
+  text-align: center;">
+
+<h3>Setting Threshold</h3>
+
+<label> Temperature</label>
+<input type="number" id="tempThreshold"  placeholder="°C" style="width: 80px; padding: 5px;">
+
+<br> <br>
+
+<label>Humidity</label>
+<input type="number" id="humidityThreshold" placeholder="%" style="width: 80px; padding: 5px;"> 
+
+<br> <br>
+
+<button onclick="saveThreshold" style="padding: 8px 20px; border: 0; border-radius: 6px; cursor: pointer;">
+    Save Threshold
+</button>
+</div>
+
+</div>
 </body>
 </html>
