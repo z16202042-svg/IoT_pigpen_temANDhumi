@@ -462,7 +462,50 @@ window.download = function() {
 link.click();
     URL.revokeObjectURL(url);
 };
+
     </script>
+<style>
+ @media (max-width: 600px) {
+
+            body {
+                padding: 5px;
+            }
+
+            .sensor-container {
+                flex-direction: column;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .sensor-box {
+                width: 95%;
+                max-width: 350px;
+            }
+
+            .button-container {
+                flex-direction: column;
+            }
+
+            .button-container button {
+                width: 90%;
+            }
+
+            .status-container {
+                flex-direction: column;
+            }
+
+            .history-container {
+                width: 100%;
+                overflow-x: auto;
+            }
+
+            .history-table {
+                min-width: 600px;
+            }
+
+        }
+
+    </style>
 
 </head>
 <body style="margin: 0; padding: 10px; font-family: Arial, Helvetica, sans-serif;">
