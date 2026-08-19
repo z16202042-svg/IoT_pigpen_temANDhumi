@@ -10,9 +10,13 @@
 import { initializeApp }
 from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 
-import { getDatabase, ref, onValue }
-from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-
+import {
+    getDatabase,
+    ref,
+    onValue,
+    push,
+    set
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyCRGbyb9E_lqImTlZAK7T-nk6HEUqLqBuA",
@@ -39,11 +43,14 @@ onValue(temperatureRef, (snapshot) => {
 
     const temperature = snapshot.val();
 
-    console.log("Temperature:", temperature);
+    currentTemperature = Number(temperature);
+
+    console.log("Temperature:", currentTemperature);
 
     document.getElementById("temperature").textContent =
-        "Temperature: " + temperature + "°C";
+        "Temperature: " + currentTemperature + "°C";
 
+        checkAutomaticCooling();
 });
 
 
@@ -55,22 +62,405 @@ onValue(humidityRef, (snapshot) => {
 
     const humidity = snapshot.val();
 
-    console.log("Humidity:", humidity);
+    currentHumidity = Number(humidity);
+
+    console.log("Humidity:", currentHumidity);
 
     document.getElementById("humidity").textContent =
-        "Humidity:" + humidity + "%";
+        "Humidity:" + currentHumidity + "%";
+
+        checkAutomaticCooling();
 
 });
-window.showThreshold = function() {
-    document.getElementById("thresholdBox").style.display = "block";
-}
-window.saveThreshold = function() {
-    const temp = document.getElementById("tempthreshold").value;
-    const humidity = document.getElementById("humidityThreshold").value;
 
-    console.log("temperature threshold: ", temp);
-    console.log("humidity threshold: ", humidity);
+window.manualCooling = function(){
+    
+    console.log("activation successfully!");
+
+
+    saveActivation(30.1, 80);
+};
+
+
+// Activation history 
+
+
+let activationRecord =[];
+let currentFilter = "daily";
+
+function saveActivation(temperature, humidity) {
+const now = new Date();
+
+const newRecord = push (
+    ref(database,"activationHistory")
+);
+
+set(newRecord, {
+    date: now.toLocaleDateString(),
+    time: now.toLocaleTimeString(),
+    temperature: temperature,
+    humidity: humidity,
+    timestamp:Date.now()
+})
+.then(() => {
+    console.log("Activation save!");
+    alert("activation is save to firebase!");
+})
+.catch((error) => {
+    console.error("firebase save error:",error);
+    alert("firebase: error" + error.message);
+});
+}
+
+onValue(
+    ref(database, "activationHistory"),
+    (snapshot) => {
+        activationRecord = [];
+        if (snapshot.exists()){
+            const date = snapshot.val();
+            Object.keys(date).forEach(key => {
+                activationRecord.push(date[key]);
+            });
+       }
+       showRecord(currentFilter);
+    }
+    
+
+);
+window.showRecord = function(filter) {
+    currentFilter = filter;
+    const table =
+    document.getElementById("activationTable");
+
+    const title = 
+    document.getElementById("periodTitle");
+
+    if (filter === "daily") {
+        title.textContent =
+        "Daily activation history";
+    }
+    else if (filter === "weekly") {
+         title.textContent =
+        "weekly activation history";
+    }
+    else {
+        title.textContent =
+        "monthly activation history"
+    }
+
+    table.innerHTML ="";
+
+    const now = Date.now();
+
+    const record = activationRecord.filter(record => {
+        const age =
+        (now - record.timestamp)
+        / (1000*60*60*24);
+
+        if(filter === "daily") {
+            return age < 7;
+        }
+
+        if(filter ==="weekly") {
+            return age >= 7 && age <30;
+        }
+        if (filter ==="monthly") {
+            return age >=30;
+        }
+    });
+ 
+    if (record.length ===0) {
+        table.innerHTML =  ` 
+        <tr>
+            <td colspan= "4" style ="padding:15px;">
+                No activation record found.
+                </td>
+                </tr>
+            `;
+            return;
+    }
+    record.forEach(record => {
+        table.innerHTML +=  `<tr>
+            <td style="padding: 10ox;">
+                ${record.date}
+                </td>
+
+                  <td style="padding: 10px;">
+                ${record.time}
+                </td>
+
+                  <td style="padding: 10px;">
+                ${record.temperature}
+                </td>
+
+                  <td style="padding: 10px;">
+                ${record.humidity}
+                </td>
+            </tr>
+            `;
+    });
+};
+
+// Set Threshold
+
+let temperatureThreshold = null;
+let humidityThreshold = null;
+
+window.showThreshold = function(){
+document.getElementById("thresholdBox").style.display = "block";
+};
+
+window.saveThreshold = function(){
+    const temp = Number(
+        document.getElementById("tempThreshold").value);
+
+        const humidity = Number(
+        document.getElementById("humidityThreshold").value);
+        
+        console.log("temperature has been save", temp);
+        console.log("humidity has been save", humidity);
+        
+    if (isNaN(temp) || isNaN(humidity)) {
+        alert ("Pls enter the both temperature and humidity.");
+        return;
+    }
+
+    console.log("Start Firebase sava...");
+
+    set(
+        ref(database, "settings/temperatureThreshold"),
+        temp
+    )
+    .then(() => { 
+        console.log("Temperature threshold saved!");
+
+    })
+
+    .catch((error) => {
+        console.error (
+            "temperature threshold error:",
+            error
+        );
+    });
+
+    set(
+        ref(database,"settings/humidityThreshold"),
+        humidity
+    )
+    .then(() => {
+        console.log("Humidity threshold saved");
+    })
+
+    .catch(() => {
+        console.error(
+            "humidity threshold error:",
+            error
+        );
+    });
+
+
+    console.log("temperature threshold: ",temp);
+    console.log("humidity threshold: ",humidity);
+
+    alert("Threshold saved successfully!");
+
     document.getElementById("thresholdBox").style.display = "none";
+
+};
+
+// automatic cooling
+
+let currentTemperature = null;
+let currentHumidity = null;
+
+let coolingActive = false;
+
+onValue(
+    ref(database, "setting/temperatureThreshold"),
+    (snapshot) => {
+        temperatureThreshold = snapshot.val();
+        console.log(
+            "temperature threshold:",
+            temperatureThreshold
+        );
+        checkAutomaticCooling();
+    }
+);
+
+onValue(
+    ref(database,"setting/humidityThreshold"),
+    (snapshot) => {
+        humidityThreshold = snapshot.val();
+
+        console.log(
+            "humidity threshold:",
+            humidityThreshold
+        );
+        checkAutomaticCooling();
+    }
+);
+
+onValue(
+    ref(database, "sensor/temperature"),
+    (snapshot) => {
+        currentTemperature = Number(snapshot.val());
+
+        console.log(
+        "Current temperature",
+        currentTemperature
+    );
+    checkAutomaticCooling();
+    }
+);
+
+onValue(
+    ref(database, "sensor/humidity"),
+    (snapshot) => {
+        currentHumidity = Number(snapshot.val());
+
+        console.log(
+        "Current humidity",
+        currentHumidity
+    );
+    checkAutomaticCooling();
+    }
+);
+
+function checkAutomaticCooling() {
+
+    
+    if (
+        currentTemperature === null ||
+        currentHumidity === null ||
+        temperatureThreshold === null ||
+        humidityThreshold === null
+    ) {
+
+        return;
+    }
+
+    console.log (
+        "Checking automatic cooling..."
+    );
+    if (
+        currentTemperature >= temperatureThreshold ||
+        currentHumidity >= humidityThreshold
+    ) {
+        if(!coolingActive) {
+            coolingActive = true;
+
+            console.log(
+                "THRESHOLD REACH!"
+            );
+            activateAutomaticCooling();
+        }
+    }
+
+    else{
+        coolingActive = false;
+
+        console.log(
+            "temperature and humidity are below threshold"
+        );
+}
+}
+
+function activateAutomaticCooling() {
+    console.log(
+        "Automatic cooling Activated!"
+    );
+
+    set(
+        ref(database, "control/sprinkler"),
+        true
+    );
+    set(
+        ref(database, "control/fan"),
+        true
+    );
+    saveActivation(
+        currentTemperature,
+        currentHumidity
+    );
+}
+
+// Sprinkler and Fan Status
+onValue(
+    ref(database,"control/fan"),
+    (snapshot) =>{
+        const fanStatus = snapshot.val();
+
+        console.log("Fan status:", fanStatus);
+
+        if(fanStatus === true) {
+            document.getElementById("fanStatus").textContent =
+            "Fan status on: ON";
+        } else {
+           document.getElementById("fanStatus").textContent =
+           "fan Status: OFF"; 
+        }
+    }
+);
+
+onValue (
+    ref(database,"control/sprinkler"),
+    (snapshot) => {
+const sprinklerStatus = snapshot.val();
+
+console.log("Sprinkler Status:", sprinklerStatus);
+
+if (sprinklerStatus === true) {
+    document.getElementById("sprinklerStatus").textContent =
+    "sprinklerStatus: ON";
+}
+else{
+    document.getElementById("sprinklerStatus").textContent =
+    "sprinklerStatus: OFF";
+}
+    }
+);
+
+// download activation history
+
+window.download = function() {
+    if (activationRecord.length === 0) {
+        alert("no activation history available!");
+        return;
+    }
+    let csv = 
+    "Date,Time,Temperature,Humidity\n";
+
+    activationRecord.forEach(record => {
+
+        csv +=
+            `"${record.date}",` +
+            `"${record.time}",` +
+            `"${record.temperature}",` +
+            `"${record.humidity}"\n`;
+
+    });
+
+    const blob = new Blob (
+        [csv],
+        {
+            type: "text/csv;charset=utf-8;"
+        }
+    );
+    const url =
+    URL.createObjectURL(blob);
+
+    const link =
+    document.createElement("a");
+
+    link.setAttribute("href", url);
+
+    link.setAttribute(
+        "download",
+        "activation_history.csv"
+    );
+    document.body.appendChild(link);
+link.click();
+    URL.revokeObjectURL(url);
 };
     </script>
 
@@ -85,14 +475,43 @@ window.saveThreshold = function() {
            
         </div>
 
-        <div style="background-color:azure; width:250px; height:80px;">
+        <div style="background-color:azure; width:250px; height:80px; ">
             <h2 id="humidity" style="text-align: center;">Humidity</h2>
         </div>
 
     </div>
-<button onclick="showThreshold()" style="margin-top: 20px; padding: 10px 25px;">
-    Set Threshold
-</button>
+   
+
+
+<div style="text-align: center; margin-top: 10px;">
+   
+
+<div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 10px;">
+
+    <button onclick="showThreshold()" style="padding: 10px 25px;">
+        Set Threshold
+    </button>
+
+    <button onclick="manualCooling()" style="padding: 10px 25px;">
+        Activate Sprinkler & Fan
+    </button>
+
+</div>
+
+<div style="display: flex; justify-content: center; align-items: center; gap: 10px;">
+
+    <div id="fanStatus" style="width: 150px; height: 40px; background: azure; margin-top: 10px;
+                justify-content: center; align-items: center; display: flex;">
+        <h4>Fan Status:</h4>
+    </div>
+
+    <div id="sprinklerStatus" style="width: 150px; height: 40px; background: azure; margin-top: 10px;
+                justify-content: center; align-items: center; display: flex;">
+        <h4>Sprinkler Status:</h4>
+    </div>
+
+</div>
+
   <div id="thresholdBox" style="
   display: none;
   position: fixed;
@@ -118,10 +537,74 @@ window.saveThreshold = function() {
 
 <br> <br>
 
-<button onclick="saveThreshold" style="padding: 8px 20px; border: 0; border-radius: 6px; cursor: pointer;">
+<button onclick="saveThreshold()" style="padding: 8px 20px; border: 0; border-radius: 6px; cursor: pointer;">
     Save Threshold
 </button>
 </div>
+
+<h3 style="text-align: center; margin-top: 25px;">
+    Activation History
+</h3>
+
+<div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 15px;">
+<button onclick="showRecord ('daily')" style="padding: 8px 20px;"> 
+    Daily
+</button>  
+
+<button onclick="showRecord ('weekly')" style="padding: 8px 20px;"> 
+    Weekly
+</button> 
+
+<button onclick="showRecord ('monthly')" style="padding: 8px 20px;"> 
+    Monthly
+</button> 
+</div>
+
+<h4 id="periodTitle" style="text-align: center;"> Daily Activation History</h4>
+
+ <div style="
+        display: grid;
+        grid-template-columns: 25% 25% 25% 5%;
+        margin-bottom: 5px;
+    ">
+
+        <div></div>
+        <div></div>
+        <div></div>
+
+        <div style="text-align: center;">
+            <button
+                onclick="download()"
+                style="padding: 8px 15px;"
+            >
+                Download
+            </button>
+        </div>
+
+    </div>
+
+<div style="display: flex; justify-content: center;">
+ <table border="1" style="border-collapse: collapse; width: 80%; text-align: center;">
+     <tr>
+        <th style="padding: 10px;">Date</th>
+        <th style="padding: 10px;">Time</th>
+        <th style="padding: 10px;">Temperature</th>
+        <th style="padding: 10px;">Humidity</th>
+    
+    </tr>
+    
+    <tbody id="activationTable"></tbody>
+ </table>
+
+</div>
+
+</div>
+
+
+
+
+
+
 
 </div>
 </body>
