@@ -75,7 +75,7 @@ window.manualCooling = function(){
      console.log("Manual activation started!");
 
      set(
-        ref(database,"control/fan"),
+        ref(database,"/devices/fan/status"),
         true
      )
      .then(() => {
@@ -86,7 +86,7 @@ console.error("Fan activation error:", error);
 });
 
 set(
-    ref(database,"control/sprinkler"),
+    ref(database,"/devices/water_pump/status"),
     true
 )
 .then(() => {
