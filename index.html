@@ -76,10 +76,10 @@ window.manualCooling = function(){
 
      set(
         ref(database,"/devices/fan/status"),
-        true
+        "ON"
      )
      .then(() => {
-        console.log("Fan manual activation sent!");
+        console.log("Fan status set to ON!");
 })
 .catch((error) => {
 console.error("Fan activation error:", error);
@@ -87,10 +87,10 @@ console.error("Fan activation error:", error);
 
 set(
     ref(database,"/devices/water_pump/status"),
-    true
+    "ON"
 )
 .then(() => {
-    console.log("Sprinkler manual activation sent!");
+    console.log("Sprinkler status set ON!");
 
 })
 .catch((error) => {
