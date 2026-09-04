@@ -72,11 +72,37 @@ onValue(humidityRef, (snapshot) => {
 });
 
 window.manualCooling = function(){
-    
-    console.log("activation successfully!");
+     console.log("Manual activation started!");
+
+     set(
+        ref(database,"control/fan"),
+        true
+     )
+     .then(() => {
+        console.log("Fan manual activation sent!");
+})
+.catch((error) => {
+console.error("Fan activation error:", error);
+});
+
+set(
+    ref(database,"control/sprinkler"),
+    true
+)
+.then(() => {
+    console.log("Sprinkler manual activation sent!");
+
+})
+.catch((error) => {
+    console.error("Sprinkler activation error:", error);
+});
+
+saveActivation(
+    currentTemperature,
+    currentHumidity
+
+);
 };
-
-
 // Activation history 
 
 
