@@ -382,7 +382,7 @@ function activateAutomaticCooling() {
 // Mater switch to the fan and water pump status
 
 onValue(
-    ref(database,"device/master_switch/status"),
+    ref(database,"devices/master_switch/status"),
     (snapshot) => {
         const switchStatus = snapshot.val();
         console.log("Master switch status", switchStatus);
