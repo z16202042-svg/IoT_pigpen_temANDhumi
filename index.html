@@ -379,39 +379,28 @@ function activateAutomaticCooling() {
     );
 }
 
-// Sprinkler and Fan Status
+// Mater switch to the fan and water pump status
+
 onValue(
-    ref(database,"control/fan"),
-    (snapshot) =>{
-        const fanStatus = snapshot.val();
-
-        console.log("Fan status:", fanStatus);
-
-        if(fanStatus === true) {
-            document.getElementById("fanStatus").textContent =
-            "Fan status on: ON";
-        } else {
-           document.getElementById("fanStatus").textContent =
-           "fan Status: OFF"; 
-        }
-    }
-);
-
-onValue (
-    ref(database,"control/sprinkler"),
+    ref(database,"device/master_switch/status"),
     (snapshot) => {
-const sprinklerStatus = snapshot.val();
+        const switchStatus = snapshot.val();
+        console.log("Master switch status", switchStatus);
 
-console.log("Sprinkler Status:", sprinklerStatus);
+        if (switchStatus === "ON") {
 
-if (sprinklerStatus === true) {
-    document.getElementById("sprinklerStatus").textContent =
-    "sprinklerStatus: ON";
-}
-else{
-    document.getElementById("sprinklerStatus").textContent =
-    "sprinklerStatus: OFF";
-}
+            document.getElementById("fanStatus").innerHTML =
+            "<h4>Fan Status: ON</h4>";
+             document.getElementById("sprinklerStatus").innerHTML =
+            "<h4>Water Pump Status: ON</h4>";
+        }
+        else{
+             document.getElementById("fanStatus").innerHTML =
+            "<h4>Fan Status: OFF</h4>";
+
+             document.getElementById("sprinklerStatus").innerHTML =
+            "<h4>Water Pump Status: OFF</h4>";
+        }
     }
 );
 
