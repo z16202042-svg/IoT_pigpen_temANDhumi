@@ -77,16 +77,11 @@ window.manualCooling = function() {
 
     console.log("Manual activation started!");
 
-    const fanRef =
-        ref(database, "/devices/fan/status");
-
-    const pumpRef =
-        ref(database, "/devices/water_pump/status");
-
     const masterRef =
         ref(database, "/devices/master_switch/status");
 
 
+    // Check master switch
     get(masterRef)
     .then((masterSnapshot) => {
 
@@ -94,109 +89,36 @@ window.manualCooling = function() {
             masterSnapshot.val();
 
         console.log(
-            "Master switch status: ",
+            "Master switch status:",
             masterStatus
         );
 
 
+        // Master switch is OFF
         if (masterStatus !== "ON") {
 
             console.log(
                 "Manual activation is blocked!"
             );
 
-            alert("Master switch is OFF");
+            alert(
+                "Master switch is OFF"
+            );
 
             return;
         }
 
 
-        return get(fanRef)
-
-        .then((snapshot) => {
-
-            let currentStatus =
-                snapshot.val();
-
-            console.log(
-                "Current fan status: ",
-                currentStatus
-            );
-
-
-            if (currentStatus === true) {
-
-                currentStatus = "ON";
-            }
-
-
-            const newState =
-                currentStatus === "ON"
-                ? "OFF"
-                : "ON";
-
-
-            console.log(
-                "New status: ",
-                newState
-            );
-
-
-            return Promise.all([
-
-                set(
-                    fanRef,
-                    newState
-                ),
-
-                set(
-                    pumpRef,
-                    newState
-                )
-
-            ])
-
-            .then(() => {
-
-                console.log(
-                    "Fan status changed to: ",
-                    newState
-                );
-
-                console.log(
-                    "Water pump status changed to: ",
-                    newState
-                );
-
-
-                if (newState === "ON") {
-
-                    document.getElementById("fanStatus").innerHTML =
-                        "<h4>Fan Status: ON</h4>";
-
-                    document.getElementById("sprinklerStatus").innerHTML =
-                        "<h4>Water Pump Status: ON</h4>";
-                }
-
-                else {
-
-                    document.getElementById("fanStatus").innerHTML =
-                        "<h4>Fan Status: OFF</h4>";
-
-                    document.getElementById("sprinklerStatus").innerHTML =
-                        "<h4>Water Pump Status: OFF</h4>";
-                }
-
-            });
-
-        });
+        // Master switch is ON
+        console.log(
+            "Master switch is ON. Manual activation allowed!"
+        );
 
     })
-
     .catch((error) => {
 
         console.error(
-            "Manual activation error:",
+            "Master switch error:",
             error
         );
 
