@@ -72,70 +72,136 @@ onValue(humidityRef, (snapshot) => {
 
 });
 
-window.manualCooling = function(){
-     console.log("Manual activation started!");
-const fanRef = ref(database,"/devices/fan/status");
-const pumpRef = ref(database,"/devices/water_pump/status");
+// manual activation button
+window.manualCooling = function() {
 
-//read the current fan and pump status
-get(fanRef)
-.then((snapshot) => {
-let currentStatus =  snapshot.val();
+    console.log("Manual activation started!");
 
-console.log("Current fan status: ", currentStatus);
+    const fanRef =
+        ref(database, "/devices/fan/status");
 
-if(currentStatus === true ) {
-    currentStatus = "ON";
-}
+    const pumpRef =
+        ref(database, "/devices/water_pump/status");
 
-const newState =
-currentStatus === "ON" ? "OFF" : "ON" ;
+    const masterRef =
+        ref(database, "/devices/master_switch/status");
 
-console.log("New status: ", newStatus);
 
-return set (
-    fanRef,
-    newState
-)
-.then(() => {
-    console.log(
-        "Fan status change to :",
-        newStatus
-    );
+    get(masterRef)
+    .then((masterSnapshot) => {
 
-    return set(
-        pumpRef,
-        newState
-    );
-})
-.then(() => {
-    console.log(
-        "Water pump status change to: ",
-        newState
-    );
-    if (newState === "ON") {
-        document.getElementById("fanStatus").innerHTML =
-        "<h4>Fan Status: ON</h4>";
+        const masterStatus =
+            masterSnapshot.val();
 
-         document.getElementById("sprinklerStatus").innerHTML =
+        console.log(
+            "Master switch status: ",
+            masterStatus
+        );
+
+
+        if (masterStatus !== "ON") {
+
+            console.log(
+                "Manual activation is blocked!"
+            );
+
+            alert("Master switch is OFF");
+
+            return;
+        }
+
+
+        return get(fanRef)
+
+        .then((snapshot) => {
+
+            let currentStatus =
+                snapshot.val();
+
+            console.log(
+                "Current fan status: ",
+                currentStatus
+            );
+
+
+            if (currentStatus === true) {
+
+                currentStatus = "ON";
+            }
+
+
+            const newState =
+                currentStatus === "ON"
+                ? "OFF"
+                : "ON";
+
+
+            console.log(
+                "New status: ",
+                newState
+            );
+
+
+            return Promise.all([
+
+                set(
+                    fanRef,
+                    newState
+                ),
+
+                set(
+                    pumpRef,
+                    newState
+                )
+
+            ])
+
+            .then(() => {
+
+                console.log(
+                    "Fan status changed to: ",
+                    newState
+                );
+
+                console.log(
+                    "Water pump status changed to: ",
+                    newState
+                );
+
+
+                if (newState === "ON") {
+
+                    document.getElementById("fanStatus").innerHTML =
+                        "<h4>Fan Status: ON</h4>";
+
+                    document.getElementById("sprinklerStatus").innerHTML =
                         "<h4>Water Pump Status: ON</h4>";
-    }
-    else {
-         document.getElementById("fanStatus").innerHTML =
+                }
+
+                else {
+
+                    document.getElementById("fanStatus").innerHTML =
                         "<h4>Fan Status: OFF</h4>";
 
                     document.getElementById("sprinklerStatus").innerHTML =
                         "<h4>Water Pump Status: OFF</h4>";
-    }
-});
-})
-.catch((error) => {
+                }
 
-            console.error(
-                "Manual activation error:",
-                error
-);
-});
+            });
+
+        });
+
+    })
+
+    .catch((error) => {
+
+        console.error(
+            "Manual activation error:",
+            error
+        );
+
+    });
+
 };
 
 // Activation history 
@@ -415,61 +481,44 @@ onValue(
 
 function checkAutomaticCooling() {
 
-    
-    if (
-        currentTemperature === null ||
-        currentHumidity === null ||
-        temperatureThreshold === null ||
-        humidityThreshold === null
-    ) {
-
-        return;
-    }
-
-    console.log (
-        "Checking automatic cooling..."
-    );
-    if (
-        currentTemperature >= temperatureThreshold ||
-        currentHumidity >= humidityThreshold
-    ) {
-        if(!coolingActive) {
-            coolingActive = true;
-
-            console.log(
-                "THRESHOLD REACH!"
-            );
-            activateAutomaticCooling();
-        }
-    }
-
-    else{
-        coolingActive = false;
-
-        console.log(
-            "temperature and humidity are below threshold"
-        );
-}
-}
-
-function activateAutomaticCooling() {
     console.log(
-        "Automatic cooling Activated!"
+        "Automatic cooling activated!"
     );
 
-    set(
-        ref(database, "control/sprinkler"),
-        true
-    );
-    set(
-        ref(database, "control/fan"),
-        true
-    );
-    saveActivation(
-        currentTemperature,
-        currentHumidity
-    );
-}
+    const masterRef =
+    ref(database, "devices/master_switch/status");
+    
+    get(masterRef)
+    .then((snapshot) => {
+        const masterStatus = 
+        snapshot.val();
+
+        console.log("Master switch stauts: ", masterStatus);
+
+        if(masterStatus !=="ON") {
+            console.log(
+                "Automatic cooling block master switch is OFF");
+                return;
+        }
+
+        set(
+            ref(database, "devices/water_pump/status"), "ON");
+
+            set(
+                ref(database,"devices/fan/status"), "ON" );
+    
+                saveActivation(
+                    currentTemperature,
+                    currentHumidity
+                );
+    })
+    .catch((error) => {
+        console.error(
+            "Automatic cooling error: ", error
+        );
+    });
+}  
+  
 
 // Mater switch to the fan and water pump status
 
