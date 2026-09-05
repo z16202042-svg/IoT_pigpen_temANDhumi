@@ -15,7 +15,8 @@ import {
     ref,
     onValue,
     push,
-    set
+    set,
+    get
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -73,36 +74,70 @@ onValue(humidityRef, (snapshot) => {
 
 window.manualCooling = function(){
      console.log("Manual activation started!");
+const fanRef = ref(database,"/devices/fan/status");
+const pumpRef = ref(database,"/devices/water_pump/status");
 
-     set(
-        ref(database,"/devices/fan/status"),
-        "ON"
-     )
-     .then(() => {
-        console.log("Fan status set to ON!");
-})
-.catch((error) => {
-console.error("Fan activation error:", error);
-});
+//read the current fan and pump status
+get(fanRef)
+.then((snapshot) => {
+let currentStatus =  snapshot.val();
 
-set(
-    ref(database,"/devices/water_pump/status"),
-    "ON"
+console.log("Current fan status: ", currentStatus);
+
+if(currentStatus === true ) {
+    currentStatus = "ON";
+}
+
+const newState =
+currentStatus === "ON" ? "OFF" : "ON" ;
+
+console.log("New status: ", newStatus);
+
+return set (
+    fanRef,
+    newState
 )
 .then(() => {
-    console.log("Sprinkler status set ON!");
+    console.log(
+        "Fan status change to :",
+        newStatus
+    );
 
+    return set(
+        pumpRef,
+        newState
+    );
+})
+.then(() => {
+    console.log(
+        "Water pump status change to: ",
+        newState
+    );
+    if (newState === "ON") {
+        document.getElementById("fanStatus").innerHTML =
+        "<h4>Fan Status: ON</h4>";
+
+         document.getElementById("sprinklerStatus").innerHTML =
+                        "<h4>Water Pump Status: ON</h4>";
+    }
+    else {
+         document.getElementById("fanStatus").innerHTML =
+                        "<h4>Fan Status: OFF</h4>";
+
+                    document.getElementById("sprinklerStatus").innerHTML =
+                        "<h4>Water Pump Status: OFF</h4>";
+    }
+});
 })
 .catch((error) => {
-    console.error("Sprinkler activation error:", error);
-});
 
-saveActivation(
-    currentTemperature,
-    currentHumidity
-
+            console.error(
+                "Manual activation error:",
+                error
 );
+});
 };
+
 // Activation history 
 
 
@@ -149,77 +184,108 @@ onValue(
 
 );
 window.showRecord = function(filter) {
-    currentFilter = filter;
-    const table =
-    document.getElementById("activationTable");
 
-    const title = 
-    document.getElementById("periodTitle");
+    currentFilter = filter;
+
+    const table =
+        document.getElementById("activationTable");
+
+    const title =
+        document.getElementById("periodTitle");
+
 
     if (filter === "daily") {
+
         title.textContent =
-        "Daily activation history";
+            "Daily activation history";
+
     }
     else if (filter === "weekly") {
-         title.textContent =
-        "weekly activation history";
+
+        title.textContent =
+            "Weekly activation history";
+
     }
     else {
+
         title.textContent =
-        "monthly activation history"
+            "Monthly activation history";
     }
 
-    table.innerHTML ="";
+
+    table.innerHTML = "";
 
     const now = Date.now();
 
     const record = activationRecord.filter(record => {
-        const age =
-        (now - record.timestamp)
-        / (1000*60*60*24);
 
-        if(filter === "daily") {
+        const age =
+            (now - record.timestamp)
+            / (1000 * 60 * 60 * 24);
+
+
+        if (filter === "daily") {
+
             return age < 7;
         }
 
-        if(filter ==="weekly") {
-            return age >= 7 && age <30;
+
+        if (filter === "weekly") {
+
+            return age >= 7 && age < 30;
         }
-        if (filter ==="monthly") {
-            return age >=30;
+
+
+        if (filter === "monthly") {
+
+            return age >= 30;
         }
+
+        return false;
+
     });
- 
-    if (record.length ===0) {
-        table.innerHTML =  ` 
-        <tr>
-            <td colspan= "4" style ="padding:15px;">
-                No activation record found.
-                </td>
-                </tr>
-            `;
-            return;
-    }
-    record.forEach(record => {
-        table.innerHTML +=  `<tr>
-            <td style="padding: 10ox;">
-                ${record.date}
-                </td>
 
-                  <td style="padding: 10px;">
-                ${record.time}
-                </td>
 
-                  <td style="padding: 10px;">
-                ${record.temperature}
-                </td>
+    if (record.length === 0) {
 
-                  <td style="padding: 10px;">
-                ${record.humidity}
+        table.innerHTML = `
+            <tr>
+                <td colspan="4" style="padding:15px;">
+                    No activation record found.
                 </td>
             </tr>
-            `;
+        `;
+
+        return;
+    }
+
+
+    record.forEach(record => {
+
+        table.innerHTML += `
+            <tr>
+
+                <td style="padding:10px;">
+                    ${record.date}
+                </td>
+
+                <td style="padding:10px;">
+                    ${record.time}
+                </td>
+
+                <td style="padding:10px;">
+                    ${record.temperature}
+                </td>
+
+                <td style="padding:10px;">
+                    ${record.humidity}
+                </td>
+
+            </tr>
+        `;
+
     });
+
 };
 
 // Set Threshold
