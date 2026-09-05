@@ -211,44 +211,78 @@ let activationRecord =[];
 let currentFilter = "daily";
 
 function saveActivation(temperature, humidity) {
-const now = new Date();
 
-const newRecord = push (
-    ref(database,"activationHistory")
-);
+    const masterRef =
+        ref(database, "/devices/master_switch/status");
 
-set(newRecord, {
-    date: now.toLocaleDateString(),
-    time: now.toLocaleTimeString(),
-    temperature: temperature,
-    humidity: humidity,
-    timestamp:Date.now()
-})
-.then(() => {
-    console.log("Activation save!");
-    alert("activation is save to firebase!");
-})
-.catch((error) => {
-    console.error("firebase save error:",error);
-    alert("firebase: error" + error.message);
-});
+    get(masterRef)
+    .then((snapshot) => {
+
+        const masterStatus =
+            snapshot.val();
+
+        console.log(
+            "Master switch before saving:",
+            masterStatus
+        );
+
+
+        // Do not save activation history
+        // when master switch is OFF
+        if (masterStatus !== "ON") {
+
+            console.log(
+                "Activation history NOT saved because master switch is OFF."
+            );
+
+            return;
+        }
+
+
+        // Master switch is ON
+        const now = new Date();
+
+        const newRecord =
+            push(
+                ref(database, "activationHistory")
+            );
+
+
+        return set(newRecord, {
+
+            date: now.toLocaleDateString(),
+
+            time: now.toLocaleTimeString(),
+
+            temperature: temperature,
+
+            humidity: humidity,
+
+            timestamp: Date.now()
+
+        });
+
+    })
+
+    .then(() => {
+
+        console.log(
+            "Activation save!"
+        );
+
+    })
+
+    .catch((error) => {
+
+        console.error(
+            "Firebase save error:",
+            error
+        );
+
+    });
+
 }
 
-onValue(
-    ref(database, "activationHistory"),
-    (snapshot) => {
-        activationRecord = [];
-        if (snapshot.exists()){
-            const date = snapshot.val();
-            Object.keys(date).forEach(key => {
-                activationRecord.push(date[key]);
-            });
-       }
-       showRecord(currentFilter);
-    }
-    
-
-);
 window.showRecord = function(filter) {
 
     currentFilter = filter;
