@@ -127,83 +127,33 @@ window.manualCooling = function() {
 };
 
 // Activation history 
-
-
-let activationRecord =[];
+let activationRecord = [];
 let currentFilter = "daily";
 
-function saveActivation(temperature, humidity) {
 
-    const masterRef =
-        ref(database, "/devices/master_switch/status");
+// Read activation history from Firebase
+onValue(
+    ref(database, "activationHistory"),
+    (snapshot) => {
 
-    get(masterRef)
-    .then((snapshot) => {
+        activationRecord = [];
 
-        const masterStatus =
-            snapshot.val();
+        if (snapshot.exists()) {
 
-        console.log(
-            "Master switch before saving:",
-            masterStatus
-        );
+            const data = snapshot.val();
 
+            Object.keys(data).forEach((key) => {
 
-        // Do not save activation history
-        // when master switch is OFF
-        if (masterStatus !== "ON") {
+                activationRecord.push(data[key]);
 
-            console.log(
-                "Activation history NOT saved because master switch is OFF."
-            );
+            });
 
-            return;
         }
 
+        showRecord(currentFilter);
 
-        // Master switch is ON
-        const now = new Date();
-
-        const newRecord =
-            push(
-                ref(database, "activationHistory")
-            );
-
-
-        return set(newRecord, {
-
-            date: now.toLocaleDateString(),
-
-            time: now.toLocaleTimeString(),
-
-            temperature: temperature,
-
-            humidity: humidity,
-
-            timestamp: Date.now()
-
-        });
-
-    })
-
-    .then(() => {
-
-        console.log(
-            "Activation save!"
-        );
-
-    })
-
-    .catch((error) => {
-
-        console.error(
-            "Firebase save error:",
-            error
-        );
-
-    });
-
-}
+    }
+);
 
 window.showRecord = function(filter) {
 
