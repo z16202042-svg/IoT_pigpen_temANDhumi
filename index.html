@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
    
+    <script
+    type="text/javascript"
+    src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js">
+</script>
+
+<script>
+    emailjs.init({
+        publicKey: "TCL4L0R67wKLAFpoz"
+    });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
    <script type="module"> 
 
 import { initializeApp }
@@ -18,7 +31,14 @@ import {
     set,
     get
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-database.js";
-
+import {
+    getAuth,
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+}
+from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 const firebaseConfig = {
     apiKey: "AIzaSyCRGbyb9E_lqImTlZAK7T-nk6HEUqLqBuA",
     authDomain: "my-esp32-project-3b1a5.firebaseapp.com",
@@ -31,29 +51,34 @@ const firebaseConfig = {
 };
 
 
+
 const app = initializeApp(firebaseConfig);
 
 const database = getDatabase(app);
 
+const auth = getAuth(app);
+
 console.log("Firebase initialized successfully");
+
+
+
+// Temperature
+
 const temperatureRef = ref(database, "sensor/Temperature");
 
 onValue(temperatureRef, (snapshot) => {
+    console.log("Temperature snapshot received!");
+    console.log("Temperature value:", snapshot.val());
 
     const temperature = snapshot.val();
 
-    currentTemperature = Number(temperature);
-
-    console.log("Temperature:", currentTemperature);
-
     document.getElementById("temperature").textContent =
-        "Temperature: " + currentTemperature + "°C";
-
-        checkAutomaticCooling();
+        "Temperature: " + temperature + "°C";
+}, (error) => {
+    console.error("Temperature Firebase error:", error);
 });
 
-
-// HUMIDITY
+// Humidity
 
 const humidityRef = ref(database, "sensor/Humidity");
 
@@ -61,319 +86,969 @@ onValue(humidityRef, (snapshot) => {
 
     const humidity = snapshot.val();
 
-    currentHumidity = Number(humidity);
-
-    console.log("Humidity:", currentHumidity);
+    console.log("Humidity:", humidity);
 
     document.getElementById("humidity").textContent =
-        "Humidity:" + currentHumidity + "%";
+        "Humidity:" + humidity + "%";
 
-        checkAutomaticCooling();
 
 });
 
-// manual activation button
-window.manualCooling = function() {
+// ======================================================
+// MASTER SWITCH STATUS LISTENER
+// ======================================================
 
-    console.log("Manual activation started!");
+onValue(
+    ref(database, "devices/master/status"),
+    async (snapshot) => {
 
-    const masterRef =
-        ref(database, "/devices/master_switch/status");
-
-
-    // Check master switch
-    get(masterRef)
-    .then((masterSnapshot) => {
-
-        const masterStatus =
-            masterSnapshot.val();
+        const masterStatus = snapshot.val();
 
         console.log(
             "Master switch status:",
             masterStatus
         );
 
+        // ==================================================
+        // MASTER SWITCH OFF
+        // ==================================================
 
-        // Master switch is OFF
         if (masterStatus !== "ON") {
 
             console.log(
-                "Manual activation is blocked!"
+                "MASTER SWITCH OFF - Turning off all cooling devices."
+            );
+
+            try {
+
+                await Promise.all([
+
+                    set(
+                        ref(database, "devices/manualCooling"),
+                        false
+                    ),
+
+                    set(
+                        ref(database, "devices/water_pump"),
+                        false
+                    ),
+
+                    set(
+                        ref(database, "devices/fan"),
+                        false
+                    )
+
+                ]);
+
+              // ==================================================
+// CLEAR ALL WEBSITE COOLING TIMERS
+// ==================================================
+
+// ==================================================
+// MASTER OFF - CLEAR ALL COOLING TIMERS
+// ==================================================
+
+clearCoolingTimersDisplay();
+
+manualCoolingActive = false;
+manualCoolingCycle = false;
+
+automaticCoolingCycle = false;
+fanCycleStarted = false;
+
+coolingCycleRunning = false;
+coolingActive = false;
+
+automaticRestUntil = 0;
+
+sprinklerStart = 0;
+fanStart = 0;
+
+// ==================================================
+// RESET FIREBASE TIMER FLAGS
+// ==================================================
+
+sprinklerTimerLoadedFromFirebase = false;
+fanTimerLoadedFromFirebase = false;
+
+sprinklerWaitingForFirebase = false;
+fanWaitingForFirebase = false;
+
+coolingMode = "idle";
+
+
+// ==================================================
+// CLEAR FIREBASE COOLING STATE
+// ==================================================
+
+await Promise.all([
+
+    set(
+        ref(database, "devices/manualCooling"),
+        false
+    ),
+
+    set(
+        ref(database, "devices/water_pump"),
+        false
+    ),
+
+    set(
+        ref(database, "devices/fan"),
+        false
+    ),
+
+    set(
+        ref(database, "devices/timers/sprinklerStart"),
+        0
+    ),
+
+    set(
+        ref(database, "devices/timers/fanStart"),
+        0
+    ),
+
+    set(
+        restUntilRef,
+        0
+    ),
+
+    set(
+        coolingModeRef,
+        "idle"
+    )
+
+]);
+
+updateManualCoolingButton(false);
+
+console.log(
+    "MASTER OFF - ALL COOLING TIMERS CLEARED."
+);
+
+// Update button
+updateManualCoolingButton(false);
+
+console.log(
+    "MASTER OFF - Cooling timers cleared."
+);
+
+            }
+
+            catch (error) {
+
+                console.error(
+                    "Failed to turn off cooling devices:",
+                    error
+                );
+
+            }
+        }
+    }
+);
+
+let manualCoolingActive = false;
+
+let coolingCycleRunning = false;
+
+// ======================================================
+// CLEAR COOLING TIMERS FROM WEBSITE
+// ======================================================
+
+function clearCoolingTimersDisplay() {
+
+    // Stop waiting for Firebase synchronization
+    sprinklerWaitingForFirebase = false;
+    fanWaitingForFirebase = false;
+
+    // Reset timer values
+    sprinklerStart = 0;
+    fanStart = 0;
+    // Hide sprinkler timer
+    const sprinklerCard =
+        document.getElementById("sprinklerTimerCard");
+
+    const sprinklerDisplay =
+        document.getElementById("sprinklerCountdown");
+
+    if (sprinklerCard) {
+        sprinklerCard.style.display = "none";
+    }
+
+    if (sprinklerDisplay) {
+        sprinklerDisplay.textContent = "01:30";
+    }
+
+    // Hide fan timer
+    const fanCard =
+        document.getElementById("fanTimerCard");
+
+    const fanDisplay =
+        document.getElementById("fanCountdown");
+
+        const automaticRestTimerCard =
+    document.getElementById("automaticRestTimerCard");
+
+const automaticRestCountdown =
+    document.getElementById("automaticRestCountdown");
+
+    if (fanCard) {
+        fanCard.style.display = "none";
+    }
+
+    if (fanDisplay) {
+        fanDisplay.textContent = "15:00";
+    }
+if (automaticRestTimerCard) {
+    automaticRestTimerCard.style.display = "none";
+}
+
+if (automaticRestCountdown) {
+    automaticRestCountdown.textContent = "05:00";
+}
+    // Reset cooling states
+    coolingCycleRunning = false;
+    manualCoolingActive = false;
+    coolingActive = false;
+
+    // Change button back to START
+    updateManualCoolingButton(false);
+
+    console.log(
+        "ALL COOLING TIMERS CLEARED FROM WEBSITE"
+    );
+}
+
+window.manualCooling = async function() {
+
+    console.log("Manual cooling button clicked!");
+
+        // ==================================================
+    // IF COOLING IS ALREADY RUNNING = STOP
+    // ==================================================
+
+    if (coolingCycleRunning) {
+
+        console.log(
+            "WEBSITE BUTTON: STOP COOLING"
+        );
+
+               try {
+            await startCoolingRestTimer(
+                "Cooling stopped manually. Starting 5-minute rest."
+            );
+
+            coolingLocked = true;
+
+            await set(
+                ref(database, "devices/coolingLocked"),
+                true
+            );
+
+            console.log(
+                "Cooling stopped. Rest timer is running."
+            );
+
+            return;
+
+        } catch (error) {
+
+            console.error(
+                "Failed to stop cooling:",
+                error
             );
 
             alert(
-                "Master switch is OFF"
+                "Failed to stop cooling."
             );
 
             return;
         }
-
-
-        // Master switch is ON
-        console.log(
-            "Master switch is ON. Manual activation allowed!"
-        );
-
-    })
-    .catch((error) => {
-
-        console.error(
-            "Master switch error:",
-            error
-        );
-
-    });
-
-};
-
-// Activation history 
-let activationRecord = [];
-let currentFilter = "daily";
-
-
-// Read activation history from Firebase
-onValue(
-    ref(database, "activationHistory"),
-    (snapshot) => {
-
-        activationRecord = [];
-
-        if (snapshot.exists()) {
-
-            const data = snapshot.val();
-
-            Object.keys(data).forEach((key) => {
-
-                activationRecord.push(data[key]);
-
-            });
-
-        }
-
-        showRecord(currentFilter);
-
     }
+
+    const manualCoolingRef =
+        ref(database, "devices/manualCooling");
+// ==================================================
+// CHECK MASTER SWITCH BEFORE MANUAL ACTIVATION
+// ==================================================
+
+const masterStatusSnapshot =
+    await get(
+        ref(database, "devices/master/status")
+    );
+
+const currentMasterStatus =
+    masterStatusSnapshot.exists()
+        ? masterStatusSnapshot.val()
+        : "OFF";
+
+if (currentMasterStatus !== "ON") {
+
+    console.log(
+        "MASTER SWITCH IS OFF - MANUAL ACTIVATION BLOCKED."
+    );
+
+    // Make sure no cooling devices are ON
+    await Promise.all([
+
+        set(
+            ref(database, "devices/manualCooling"),
+            false
+        ),
+
+        set(
+            ref(database, "devices/water_pump"),
+            false
+        ),
+
+        set(
+            ref(database, "devices/fan"),
+            false
+        ),
+
+        set(
+            ref(database, "devices/timers/sprinklerStart"),
+            0
+        ),
+
+        set(
+            ref(database, "devices/timers/fanStart"),
+            0
+        ),
+
+        set(
+            restUntilRef,
+            0
+        ),
+
+        set(
+            coolingModeRef,
+            "idle"
+        )
+
+    ]);
+
+    automaticRestUntil = 0;
+    sprinklerStart = 0;
+    fanStart = 0;
+
+    manualCoolingActive = false;
+    manualCoolingCycle = false;
+    coolingCycleRunning = false;
+    coolingActive = false;
+
+    clearCoolingTimersDisplay();
+
+    updateManualCoolingButton(false);
+
+    alert(
+        "Master switch is OFF. Manual activation is not available."
+    );
+
+    return;
+}
+    try {
+
+        // Get current manual cooling state
+        const snapshot = await get(manualCoolingRef);
+
+        const currentState =
+            snapshot.exists()
+                ? snapshot.val() === true
+                : false;
+
+        // Toggle
+        const newState = !currentState;
+
+        console.log(
+            "Manual cooling:",
+            newState ? "ON" : "OFF"
+        );
+
+        // ==================================================
+        // SAVE MANUAL COOLING STATE
+        // ==================================================
+
+        await set(
+            manualCoolingRef,
+            newState
+        );
+
+        // ==================================================
+        // CONTROL FAN AND SPRINKLER/PUMP TOGETHER
+        // ==================================================
+
+        await Promise.all([
+
+            set(
+                ref(database, "devices/water_pump"),
+                newState
+            ),
+
+            set(
+                ref(database, "devices/fan"),
+                newState
+            )
+
+        ]);
+
+        manualCoolingActive = newState;
+// ==================================================
+// START WEBSITE TIMER IMMEDIATELY
+// ==================================================
+
+if (newState === true) {
+
+    // ==================================================
+    // MANUAL COOLING STARTED
+    // CANCEL AUTOMATIC REST
+    // ==================================================
+
+    manualCoolingCycle = true;
+
+    automaticRestUntil = 0;
+
+    coolingMode = "manual";
+
+await set(coolingModeRef, "manual");
+await set(restUntilRef, 0);
+    // Hide rest card immediately
+    const restCard =
+        document.getElementById(
+            "automaticRestTimerCard"
+        );
+
+    const restCountdown =
+        document.getElementById(
+            "automaticRestCountdown"
+        );
+
+    if (restCard) {
+        restCard.style.display = "none";
+    }
+
+    if (restCountdown) {
+        restCountdown.textContent = "00:20";
+    }
+
+    console.log(
+        "Digital manual cooling started."
+    );
+
+    console.log(
+        "Automatic rest timer cancelled."
+    );
+
+ // ==================================================
+// START PERSISTENT MANUAL COOLING TIMERS
+// ==================================================
+
+const manualStartTime = Date.now();
+
+sprinklerStart = manualStartTime;
+fanStart = manualStartTime;
+
+sprinklerWaitingForFirebase = false;
+fanWaitingForFirebase = false;
+
+coolingCycleRunning = true;
+
+// SAVE TIMER START TIMES TO FIREBASE
+await Promise.all([
+    set(
+        ref(database, "devices/timers/sprinklerStart"),
+        manualStartTime
+    ),
+
+    set(
+        ref(database, "devices/timers/fanStart"),
+        manualStartTime
+    )
+]);
+
+console.log(
+    "Manual sprinkler timer saved:",
+    new Date(manualStartTime)
 );
 
-window.showRecord = function(filter) {
+console.log(
+    "Manual fan timer saved:",
+    new Date(manualStartTime)
+);
 
-    currentFilter = filter;
+console.log(
+    "Manual cooling timers saved to Firebase."
+);
 
-    const table =
-        document.getElementById("activationTable");
+updateCountdowns();
+}
+        // ==================================================
+        // UPDATE BUTTON
+        // ==================================================
 
-    const title =
-        document.getElementById("periodTitle");
-
-
-    if (filter === "daily") {
-
-        title.textContent =
-            "Daily activation history";
-
-    }
-    else if (filter === "weekly") {
-
-        title.textContent =
-            "Weekly activation history";
-
-    }
-    else {
-
-        title.textContent =
-            "Monthly activation history";
-    }
+        updateManualCoolingButton(newState);
 
 
-    table.innerHTML = "";
+       // ==================================================
+// IF ON
+// ==================================================
 
-    const now = Date.now();
+if (newState === true) {
 
-    const record = activationRecord.filter(record => {
-
-        const age =
-            (now - record.timestamp)
-            / (1000 * 60 * 60 * 24);
-
-
-        if (filter === "daily") {
-
-            return age < 7;
-        }
+    console.log("Manual cooling ACTIVATED!");
+    console.log("Sprinkler: ON");
+    console.log("Fan: ON");
 
 
-        if (filter === "weekly") {
+    // ==================================================
+    // FINAL MASTER STATUS CHECK BEFORE HISTORY
+    // ==================================================
 
-            return age >= 7 && age < 30;
-        }
+    const masterStatusRef =
+        ref(database, "devices/master/status");
 
+    const finalMasterSnapshot =
+        await get(masterStatusRef);
 
-        if (filter === "monthly") {
+    const finalMasterStatus =
+        finalMasterSnapshot.exists()
+            ? finalMasterSnapshot.val()
+            : "OFF";
 
-            return age >= 30;
-        }
-
-        return false;
-
-    });
-
-
-    if (record.length === 0) {
-
-        table.innerHTML = `
-            <tr>
-                <td colspan="4" style="padding:15px;">
-                    No activation record found.
-                </td>
-            </tr>
-        `;
-
-        return;
-    }
+    console.log(
+        "FINAL MASTER STATUS CHECK:",
+        finalMasterStatus
+    );
 
 
-    record.forEach(record => {
+    // ==================================================
+    // MASTER OFF - CANCEL ACTIVATION RECORD
+    // ==================================================
 
-        table.innerHTML += `
-            <tr>
+    if (finalMasterStatus !== "ON") {
 
-                <td style="padding:10px;">
-                    ${record.date}
-                </td>
-
-                <td style="padding:10px;">
-                    ${record.time}
-                </td>
-
-                <td style="padding:10px;">
-                    ${record.temperature}
-                </td>
-
-                <td style="padding:10px;">
-                    ${record.humidity}
-                </td>
-
-            </tr>
-        `;
-
-    });
-
-};
-
-// Set Threshold
-
-let temperatureThreshold = null;
-let humidityThreshold = null;
-
-window.showThreshold = function(){
-document.getElementById("thresholdBox").style.display = "block";
-};
-
-window.saveThreshold = function(){
-    const temp = Number(
-        document.getElementById("tempThreshold").value);
-
-        const humidity = Number(
-        document.getElementById("humidityThreshold").value);
-        
-        console.log("temperature has been save", temp);
-        console.log("humidity has been save", humidity);
-        
-    if (isNaN(temp) || isNaN(humidity)) {
-        alert ("Pls enter the both temperature and humidity.");
-        return;
-    }
-
-    console.log("Start Firebase sava...");
-
-    set(
-        ref(database, "settings/temperatureThreshold"),
-        temp
-    )
-    .then(() => { 
-        console.log("Temperature threshold saved!");
-
-    })
-
-    .catch((error) => {
-        console.error (
-            "temperature threshold error:",
-            error
+        console.log(
+            "MASTER SWITCH OFF - Canceling activation history and email."
         );
-    });
 
-    set(
-        ref(database,"settings/humidityThreshold"),
-        humidity
+        // Turn everything OFF
+        await Promise.all([
+
+            set(
+                ref(database, "devices/manualCooling"),
+                false
+            ),
+
+            set(
+                ref(database, "devices/water_pump"),
+                false
+            ),
+
+            set(
+                ref(database, "devices/fan"),
+                false
+            )
+
+        ]);
+
+        manualCoolingActive = false;
+
+        updateManualCoolingButton(false);
+
+        alert(
+            "Master switch is OFF. Cooling activation canceled."
+        );
+
+        return;
+    }
+
+
+    // ==================================================
+    // SAVE ACTIVATION HISTORY
+    // ==================================================
+
+    await saveActivation(
+        currentTemperature,
+        currentHumidity
+    );
+
+
+    // ==================================================
+    // FINAL MASTER STATUS CHECK BEFORE EMAIL
+    // ==================================================
+
+    const emailMasterSnapshot =
+        await get(masterStatusRef);
+
+    const emailMasterStatus =
+        emailMasterSnapshot.exists()
+            ? emailMasterSnapshot.val()
+            : "OFF";
+
+    console.log(
+        "MASTER STATUS BEFORE EMAIL:",
+        emailMasterStatus
+    );
+
+
+    // ==================================================
+    // MASTER OFF - DO NOT SEND EMAIL
+    // ==================================================
+
+    if (emailMasterStatus !== "ON") {
+
+        console.log(
+            "MASTER SWITCH OFF - Email will NOT be sent."
+        );
+
+        // Turn everything OFF
+        await Promise.all([
+
+            set(
+                ref(database, "devices/manualCooling"),
+                false
+            ),
+
+            set(
+                ref(database, "devices/water_pump"),
+                false
+            ),
+
+            set(
+                ref(database, "devices/fan"),
+                false
+            )
+
+        ]);
+
+        manualCoolingActive = false;
+
+        updateManualCoolingButton(false);
+
+        alert(
+            "Master switch turned OFF. Email notification canceled."
+        );
+
+        return;
+    }
+
+
+    // ==================================================
+    // SEND EMAIL
+    // ==================================================
+
+    const now = new Date();
+
+    emailjs.send(
+        "service_c9f1x2p",
+        "template_2bnkzae",
+        {
+            activation:
+                "Manual Sprinkler & Fan Activation",
+
+            temperature:
+                currentTemperature,
+
+            humidity:
+                currentHumidity,
+
+            date:
+                now.toLocaleDateString(),
+
+            time:
+                now.toLocaleTimeString()
+        }
     )
-    .then(() => {
-        console.log("Humidity threshold saved");
-    })
+    .then(function(response) {
 
-    .catch(() => {
+        console.log(
+            "Email sent successfully!",
+            response.status,
+            response.text
+        );
+
+        alert(
+            "Sprinkler & Fan activated. Email sent!"
+        );
+
+    })
+    .catch(function(error) {
+
         console.error(
-            "humidity threshold error:",
+            "Email failed:",
             error
         );
+
+        alert(
+            "Sprinkler & Fan activated, but email failed."
+        );
+
     });
 
+}
 
-    console.log("temperature threshold: ",temp);
-    console.log("humidity threshold: ",humidity);
+// ==================================================
+// IF OFF
+// ==================================================
 
-    alert("Threshold saved successfully!");
+// ==================================================
+// IF OFF
+// ==================================================
 
-    document.getElementById("thresholdBox").style.display = "none";
+else {
 
+    console.log(
+        "WEBSITE BUTTON: STOP COOLING"
+    );
+
+    await set(
+        ref(database, "devices/stopCooling"),
+        true
+    );
+
+    await set(
+        ref(database, "devices/manualCooling"),
+        false
+    );
+
+    manualCoolingActive = false;
+
+    updateManualCoolingButton(false);
+
+    console.log(
+        "Cooling stop command sent to ESP32."
+    );
+
+}
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Manual cooling Firebase error:",
+            error
+        );
+
+        alert(
+            "Failed to control sprinkler and fan: " +
+            error.message
+        );
+    }
 };
+
+
+// ======================================================
+// UPDATE COOLING BUTTON
+// ======================================================
+
+function updateManualCoolingButton(isActive) {
+
+    const button =
+        document.getElementById("manualCoolingButton");
+
+    if (!button) {
+        console.error(
+            "manualCoolingButton not found."
+        );
+        return;
+    }
+
+    if (isActive) {
+
+        button.textContent =
+            "Stop Manual Cooling";
+
+        button.classList.add("active");
+
+    } else {
+
+        button.textContent =
+            "💦 Activate Sprinkler & Fan 💨";
+
+        button.classList.remove("active");
+    }
+}
 
 // automatic cooling
 
 let currentTemperature = null;
 let currentHumidity = null;
 
+let temperatureThreshold = null;
+let humidityThreshold = null;
+
 let coolingActive = false;
+let coolingLocked = false;
+
+let sprinklerStart = 0;
+let fanStart = 0;
+
+// ======================================================
+// AUTOMATIC COOLING REST TIMER
+// ======================================================
+
+let automaticRestUntil = 0;
+
+// TEST ONLY: 20 seconds
+const AUTOMATIC_REST_DURATION = 5 * 60 * 1000;
+
+// Track the automatic cooling cycle
+let automaticCoolingCycle = false;
+let fanCycleStarted = false;
+
+let manualCoolingCycle = false;
+
+let sprinklerWaitingForFirebase = true;
+let fanWaitingForFirebase = true;
+
+// ==================================================
+// PREVENT FALSE "TIMER FINISHED" DETECTION
+// ==================================================
+
+let sprinklerTimerLoadedFromFirebase = false;
+let fanTimerLoadedFromFirebase = false;
+
+const SPRINKLER_DURATION = 90 * 1000; // 3 minutes
+const FAN_DURATION = 15 * 60 * 1000;      // 15 minutes
+
+let coolingStateInitialized = false;
+
+let coolingMode = "idle";
+// ======================================================
+// MANUAL COOLING STATUS FROM FIREBASE
+// Detects BOTH physical and digital manual activation
+// ======================================================
+
+
+ // ======================================================
+ // MANUAL COOLING STATUS FROM FIREBASE
+ // Detects physical and website manual activation
+ // ======================================================
 
 onValue(
-    ref(database, "setting/temperatureThreshold"),
-    (snapshot) => {
-        temperatureThreshold = snapshot.val();
-        console.log(
-            "temperature threshold:",
-            temperatureThreshold
-        );
-        checkAutomaticCooling();
+    ref(database, "devices/manualCooling"),
+    async (snapshot) => {
+
+        const manualState = snapshot.val() === true;
+
+        if (manualState) {
+
+            // Block manual activation during the rest period.
+            if (
+                masterStatus === "ON" &&
+                automaticRestUntil > Date.now()
+            ) {
+                console.log(
+                    "REST TIMER ACTIVE - Manual cooling blocked."
+                );
+
+                await Promise.all([
+                    set(
+                        ref(database, "devices/manualCooling"),
+                        false
+                    ),
+                    set(
+                        ref(database, "devices/water_pump"),
+                        false
+                    ),
+                    set(
+                        ref(database, "devices/fan"),
+                        false
+                    )
+                ]);
+
+                return;
+            }
+
+            // Hide the automatic rest timer.
+            const restCard = document.getElementById(
+                "automaticRestTimerCard"
+            );
+
+            const restCountdown = document.getElementById(
+                "automaticRestCountdown"
+            );
+
+            if (restCard) {
+                restCard.style.display = "none";
+            }
+
+            if (restCountdown) {
+                restCountdown.textContent = "05:00";
+            }
+
+            // Update manual cooling state.
+            manualCoolingCycle = true;
+            manualCoolingActive = true;
+            coolingCycleRunning = true;
+            automaticRestUntil = 0;
+
+            updateManualCoolingButton(true);
+            updateCountdowns();
+
+            console.log("MANUAL COOLING DETECTED");
+            console.log("Manual cooling is running.");
+
+        } else {
+
+            // Manual cooling has stopped.
+            manualCoolingActive = false;
+            manualCoolingCycle = false;
+
+            updateManualCoolingButton(false);
+
+            console.log("Manual cooling is OFF.");
+        }
     }
 );
 
+
 onValue(
-    ref(database,"setting/humidityThreshold"),
+    ref(database, "devices/coolingLocked"),
     (snapshot) => {
-        humidityThreshold = snapshot.val();
+
+        coolingLocked =
+            snapshot.val() === true;
 
         console.log(
-            "humidity threshold:",
-            humidityThreshold
+            "Cooling locked:",
+            coolingLocked
         );
-        checkAutomaticCooling();
     }
 );
 
-onValue(
-    ref(database, "sensor/temperature"),
-    (snapshot) => {
-        currentTemperature = Number(snapshot.val());
+onValue(ref(database, "setting/temperatureThreshold"), (snapshot) => {
+    temperatureThreshold = snapshot.val();
 
-        console.log(
-        "Current temperature",
-        currentTemperature
+    console.log("Temperature threshold:", temperatureThreshold);
+
+    checkAutomaticCooling();
+});
+
+onValue(ref(database, "setting/humidityThreshold"), (snapshot) => {
+    humidityThreshold = snapshot.val();
+
+    console.log("Humidity threshold:", humidityThreshold);
+
+    checkAutomaticCooling();
+});
+
+onValue(
+    ref(database, "sensor/Temperature"),
+    (snapshot) => {
+    currentTemperature = Number(snapshot.val());
+
+    console.log(
+    "Current temperature",
+    currentTemperature
     );
     checkAutomaticCooling();
     }
 );
 
 onValue(
-    ref(database, "sensor/humidity"),
+    ref(database, "sensor/Humidity"),
     (snapshot) => {
         currentHumidity = Number(snapshot.val());
 
@@ -385,71 +1060,746 @@ onValue(
     }
 );
 
-function checkAutomaticCooling() {
+// ======================================================
+// AUTOMATIC COOLING
+// ======================================================
+
+
+
+let masterStatus = "OFF";
+
+
+// ======================================================
+// MASTER SWITCH STATUS
+// ======================================================
+
+onValue(
+    ref(database, "devices/master/status"),
+    (snapshot) => {
+
+        masterStatus =
+            snapshot.val() || "OFF";
+
+        console.log(
+            "Master switch:",
+            masterStatus
+        );
+
+
+        // ==================================================
+        // MASTER OFF = FORCE WEBSITE TIMER CLEAR
+        // ==================================================
+
+        if (masterStatus !== "ON") {
+
+            automaticRestUntil = 0;
+
+            sprinklerStart = 0;
+            fanStart = 0;
+
+            coolingMode = "idle";
+
+            coolingActive = false;
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = false;
+            fanCycleStarted = false;
+
+            clearCoolingTimersDisplay();
+
+            updateManualCoolingButton(false);
+
+            console.log(
+                "MASTER OFF - WEBSITE TIMER STATE RESET."
+            );
+
+            return;
+        }
+
+
+        // ==================================================
+        // MASTER ON
+        // ==================================================
+
+        console.log(
+            "MASTER ON - Timer system ready."
+        );
+
+        checkAutomaticCooling();
+    }
+);
+
+
+// ======================================================
+// TEMPERATURE THRESHOLD
+// ======================================================
+
+onValue(
+    ref(database, "setting/temperatureThreshold"),
+    (snapshot) => {
+
+        temperatureThreshold =
+            snapshot.val();
+
+        console.log(
+            "Temperature threshold:",
+            temperatureThreshold
+        );
+
+        checkAutomaticCooling();
+    }
+);
+
+
+// ======================================================
+// HUMIDITY THRESHOLD
+// ======================================================
+
+onValue(
+    ref(database, "setting/humidityThreshold"),
+    (snapshot) => {
+
+        humidityThreshold =
+            snapshot.val();
+
+        console.log(
+            "Humidity threshold:",
+            humidityThreshold
+        );
+
+        checkAutomaticCooling();
+    }
+);
+
+
+// ======================================================
+// CURRENT TEMPERATURE
+// ======================================================
+
+onValue(
+    ref(database, "sensor/Temperature"),
+    (snapshot) => {
+
+        currentTemperature =
+            Number(snapshot.val());
+
+        console.log(
+            "Current temperature:",
+            currentTemperature
+        );
+
+        checkAutomaticCooling();
+    }
+);
+
+
+// ======================================================
+// CURRENT HUMIDITY
+// ======================================================
+
+onValue(
+    ref(database, "sensor/Humidity"),
+    (snapshot) => {
+
+        currentHumidity =
+            Number(snapshot.val());
+
+        console.log(
+            "Current humidity:",
+            currentHumidity
+        );
+
+        checkAutomaticCooling();
+    }
+);
+
+
+// ======================================================
+// CHECK AUTOMATIC COOLING
+// ======================================================
+
+async function checkAutomaticCooling() {
+
+    // ==================================================
+    // WAIT FOR FIREBASE COOLING STATE
+    // ==================================================
+
+    if (!coolingStateInitialized) {
+
+        console.log(
+            "Automatic cooling waiting for Firebase state restoration..."
+        );
+
+        return;
+    }
 
     console.log(
-        "Automatic cooling activated!"
+        "Checking automatic cooling..."
     );
 
-    const masterRef =
-    ref(database, "devices/master_switch/status");
-    
-    get(masterRef)
-    .then((snapshot) => {
-        const masterStatus = 
-        snapshot.val();
+    console.log(
+        "Temperature:",
+        currentTemperature
+    );
 
-        console.log("Master switch stauts: ", masterStatus);
+    console.log(
+        "Humidity:",
+        currentHumidity
+    );
 
-        if(masterStatus !=="ON") {
+    console.log(
+        "Temperature threshold:",
+        temperatureThreshold
+    );
+
+    console.log(
+        "Humidity threshold:",
+        humidityThreshold
+    );
+
+    console.log(
+        "Master:",
+        masterStatus
+    );
+
+
+    // ==================================================
+    // WAIT FOR REQUIRED VALUES
+    // ==================================================
+
+    if (
+        currentTemperature === null ||
+        currentHumidity === null ||
+        temperatureThreshold === null ||
+        humidityThreshold === null
+    ) {
+
+        console.log(
+            "Waiting for temperature, humidity, and thresholds..."
+        );
+
+        return;
+    }
+
+
+    // ==================================================
+    // MASTER SWITCH OFF
+    // ==================================================
+
+    if (masterStatus !== "ON") {
+
+        if (coolingActive) {
+
+            coolingActive = false;
+
             console.log(
-                "Automatic cooling block master switch is OFF");
-                return;
+                "Master OFF - Automatic cooling DEACTIVATED."
+            );
         }
 
         set(
-            ref(database, "devices/water_pump/status"), "ON");
-
-            set(
-                ref(database,"devices/fan/status"), "ON" );
-    
-                saveActivation(
-                    currentTemperature,
-                    currentHumidity
-                );
-    })
-    .catch((error) => {
-        console.error(
-            "Automatic cooling error: ", error
+            ref(database, "devices/water_pump"),
+            false
         );
-    });
-}  
-  
 
-// Mater switch to the fan and water pump status
+        set(
+            ref(database, "devices/fan"),
+            false
+        );
+
+        return;
+    }
+
+
+    // ==================================================
+    // CONVERT VALUES TO NUMBERS
+    // ==================================================
+
+    const temp =
+        Number(currentTemperature);
+
+    const humidity =
+        Number(currentHumidity);
+
+    const tempThreshold =
+        Number(temperatureThreshold);
+
+    const humidityThresholdValue =
+        Number(humidityThreshold);
+
+
+    // ==================================================
+    // CHECK FOR INVALID VALUES
+    // ==================================================
+
+    if (
+        isNaN(temp) ||
+        isNaN(humidity) ||
+        isNaN(tempThreshold) ||
+        isNaN(humidityThresholdValue)
+    ) {
+
+        console.log(
+            "Invalid temperature, humidity, or threshold value."
+        );
+
+        return;
+    }
+
+
+    console.log(
+        `Temp: ${temp}°C | Humidity: ${humidity}% | ` +
+        `Temp Threshold: ${tempThreshold}°C | ` +
+        `Humidity Threshold: ${humidityThresholdValue}%`
+    );
+
+// ==================================================
+// CHECK AUTOMATIC RESTING TIMER
+// ==================================================
+
+if (Date.now() < automaticRestUntil) {
+
+    const remaining =
+        Math.ceil(
+            (automaticRestUntil - Date.now()) / 1000
+        );
+
+    console.log(
+        "AUTOMATIC COOLING RESTING."
+    );
+
+    console.log(
+        "Automatic activation blocked for:",
+        remaining,
+        "seconds"
+    );
+
+    return;
+}
+
+    // ==================================================
+    // AUTOMATIC COOLING ACTIVATION
+    // ==================================================
+if (
+    temp >= tempThreshold &&
+    humidity >= humidityThresholdValue
+) {
+
+   
+    console.log("AUTOMATIC COOLING CONDITION MET!");
+    console.log("Temperature condition:", temp >= tempThreshold);
+    console.log("Humidity condition:", humidity >= humidityThresholdValue);
+    console.log("Cooling active:", coolingActive);
+   
+
+   if (
+    !coolingActive &&
+    !coolingLocked &&
+    coolingMode === "idle" &&
+    sprinklerStart <= 0 &&
+    fanStart <= 0 &&
+    automaticRestUntil <= 0
+) {
+
+    coolingActive = true;
+
+    // Mark this as an AUTOMATIC cooling cycle
+   automaticCoolingCycle = true;
+fanCycleStarted = false;
+
+coolingMode = "automatic";
+
+// ==================================================
+// CREATE PERSISTENT AUTOMATIC TIMER
+// ==================================================
+
+const automaticStartTime = Date.now();
+
+sprinklerStart = automaticStartTime;
+fanStart = automaticStartTime;
+
+sprinklerWaitingForFirebase = false;
+fanWaitingForFirebase = false;
+
+// Save cooling mode and timer start times
+await Promise.all([
+
+    set(
+        coolingModeRef,
+        "automatic"
+    ),
+
+    set(
+        restUntilRef,
+        0
+    ),
+
+    set(
+        ref(database, "devices/timers/sprinklerStart"),
+        automaticStartTime
+    ),
+
+    set(
+        ref(database, "devices/timers/fanStart"),
+        automaticStartTime
+    )
+
+]);
+
+console.log(
+    "AUTOMATIC COOLING TIMER SAVED TO FIREBASE."
+);
+
+console.log(
+    "Automatic timer started at:",
+    new Date(automaticStartTime)
+);
+
+    console.log(
+        "AUTOMATIC COOLING CYCLE STARTED."
+    );
+
+    // ==================================================
+    // START AUTOMATIC COOLING
+    // ==================================================
+
+    console.log("Automatic cooling ACTIVATED!");
+    console.log("Turning ON water pump...");
+    console.log("Turning ON fan...");
+
+    set(ref(database, "devices/water_pump"), true)
+        .then(() => {
+            console.log("Water pump Firebase = ON");
+        })
+        .catch((error) => {
+            console.error("Water pump failed:", error);
+        });
+
+    set(ref(database, "devices/fan"), true)
+        .then(() => {
+            console.log("Fan Firebase = ON");
+        })
+        .catch((error) => {
+            console.error("Fan failed:", error);
+        });
+
+        // ==================================================
+// SAVE AUTOMATIC ACTIVATION HISTORY
+// ==================================================
+
+await saveActivation(temp, humidity);
+
+console.log("Automatic activation history saved.");
+
+
+// ==================================================
+// GET CURRENT DATE AND TIME
+// ==================================================
+
+const now = new Date();
+
+const date = now.toLocaleDateString();
+const time = now.toLocaleTimeString();
+
+console.log("Automatic cooling date:", date);
+console.log("Automatic cooling time:", time);
+
+
+// ==================================================
+// SEND AUTOMATIC COOLING EMAIL
+// ==================================================
+
+try {
+
+    await emailjs.send(
+       "service_c9f1x2p",
+        "template_2bnkzae",
+        {
+            temperature: temp.toFixed(1),
+            humidity: humidity.toFixed(1),
+            date: date,
+            time: time
+        }
+    );
+
+    console.log("Automatic cooling email sent successfully.");
+
+} catch (error) {
+
+    console.error(
+        "Automatic cooling email failed:",
+        error
+    );
+}
+
+    } else {
+
+        console.log("Automatic cooling already ACTIVE.");
+
+    }
+
+} else {
+
+    console.log(
+        "Automatic cooling condition NOT met."
+    );
+
+    console.log(
+        "Cooling timer continues running."
+    );
+
+    // DO NOT turn fan OFF.
+    // DO NOT turn pump OFF.
+    // DO NOT change coolingActive.
+
+}
+
+    // Unlock system so the next threshold event
+    // can start a new cooling cycle.
+    if (coolingLocked) {
+
+        coolingLocked = false;
+
+        set(
+            ref(database, "devices/coolingLocked"),
+            false
+        );
+
+        console.log(
+            "Cooling lock cleared."
+        );
+    }
+}
+
+
+
+
+
+// ======================================================
+// GET MASTER BUTTON
+// ======================================================
+
+const masterButton =
+    document.getElementById("masterButton");
+
+const masterStatusDisplay =
+    document.getElementById("masterStatus");
+
+
+// ======================================================
+// LISTEN TO MASTER STATUS
+// ======================================================
 
 onValue(
-    ref(database,"devices/master_switch/status"),
+    ref(database, "devices/master/status"),
     (snapshot) => {
-        const switchStatus = snapshot.val();
-        console.log("Master switch status", switchStatus);
 
-        if (switchStatus === "ON") {
+        masterStatus =
+            snapshot.val() || "OFF";
 
-            document.getElementById("fanStatus").innerHTML =
-            "<h4>Fan Status: ON</h4>";
-             document.getElementById("sprinklerStatus").innerHTML =
-            "<h4>Water Pump Status: ON</h4>";
+        console.log(
+            "Master status:",
+            masterStatus
+        );
+
+
+        // Update website display
+
+        if (masterStatusDisplay) {
+
+            masterStatusDisplay.textContent =
+                masterStatus;
+
         }
-        else{
-             document.getElementById("fanStatus").innerHTML =
-            "<h4>Fan Status: OFF</h4>";
 
-             document.getElementById("sprinklerStatus").innerHTML =
-            "<h4>Water Pump Status: OFF</h4>";
+
+        // Update button appearance
+
+        if (masterStatus === "ON") {
+
+            masterStatusDisplay.style.color =
+                "#6f7780";
+
+        } else {
+
+            masterStatusDisplay.style.color =
+                "#6f7780";
+
+        }
+
+    }
+);
+
+
+// ======================================================
+// MASTER BUTTON CLICK
+// ======================================================
+
+// ======================================================
+// MASTER BUTTON CLICK
+// ======================================================
+
+masterButton.addEventListener("click", async () => {
+    const newStatus = masterStatus === "ON" ? "OFF" : "ON";
+
+    console.log("Changing Master to:", newStatus);
+
+    try {
+       if (newStatus === "ON") {
+
+    // Update the local master status immediately.
+    // This prevents timer listeners from clearing the rest timer.
+    masterStatus = "ON";
+
+    // Start the 5-minute rest timer immediately.
+    automaticRestUntil =
+        Date.now() + AUTOMATIC_REST_DURATION;
+
+    coolingMode = "rest";
+
+    sprinklerStart = 0;
+    fanStart = 0;
+
+    coolingActive = false;
+    coolingCycleRunning = false;
+    manualCoolingActive = false;
+
+    automaticCoolingCycle = false;
+    manualCoolingCycle = false;
+    fanCycleStarted = false;
+
+    sprinklerWaitingForFirebase = false;
+    fanWaitingForFirebase = false;
+
+    sprinklerTimerLoadedFromFirebase = false;
+    fanTimerLoadedFromFirebase = false;
+
+    // SHOW THE REST TIMER CARD IMMEDIATELY.
+    updateCountdowns();
+
+
+            // Save the rest state and ensure devices are OFF first.
+            await Promise.all([
+                set(ref(database, "devices/manualCooling"), false),
+                set(ref(database, "devices/water_pump"), false),
+                set(ref(database, "devices/fan"), false),
+                set(sprinklerStartRef, 0),
+                set(fanStartRef, 0),
+                set(restUntilRef, automaticRestUntil),
+                set(coolingModeRef, "rest")
+            ]);
+
+          
+            // Turn the master ON only after the rest is saved.
+            await set(
+                ref(database, "devices/master/status"),
+                "ON"
+            );
+
+            // Update the local status immediately.
+            // This prevents updateCountdowns() from hiding the rest timer.
+            masterStatus = "ON";
+
+            updateManualCoolingButton(false);
+            updateCountdowns();
+
+            console.log(
+                "MASTER ON - 5-minute rest timer displayed."
+            );
+
+
+            console.log(
+                "MASTER ON - Automatic cooling is blocked for 5 minutes."
+            );
+        } else {
+            // Preserve the existing complete Master OFF cleanup.
+            await set(
+                ref(database, "devices/master/status"),
+                "OFF"
+            );
+
+            console.log(
+                "MASTER OFF - Sending complete stop command."
+            );
+
+            clearCoolingTimersDisplay();
+
+            automaticRestUntil = 0;
+            sprinklerStart = 0;
+            fanStart = 0;
+
+            coolingMode = "idle";
+
+            coolingCycleRunning = false;
+            coolingActive = false;
+            manualCoolingActive = false;
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = false;
+            fanCycleStarted = false;
+
+            sprinklerTimerLoadedFromFirebase = false;
+            fanTimerLoadedFromFirebase = false;
+
+            sprinklerWaitingForFirebase = false;
+            fanWaitingForFirebase = false;
+
+            updateManualCoolingButton(false);
+
+            await Promise.all([
+                set(ref(database, "devices/stopCooling"), true),
+                set(ref(database, "devices/manualCooling"), false),
+                set(ref(database, "devices/water_pump"), false),
+                set(ref(database, "devices/fan"), false),
+                set(sprinklerStartRef, 0),
+                set(fanStartRef, 0),
+                set(restUntilRef, 0),
+                set(coolingModeRef, "idle")
+            ]);
+
+            updateCountdowns();
+
+            console.log(
+                "MASTER OFF - All cooling state cleared."
+            );
+        }
+  
+    } catch (error) {
+        console.error("Master switch error:", error);
+        alert("Failed to change the master switch. Check Firebase.");
+    }
+});
+
+
+// ======================================================
+// MASTER SWITCH CONTROLS FAN AND SPRINKLER DISPLAY
+// ======================================================
+
+onValue(
+    ref(database, "devices/master/status"),
+    (snapshot) => {
+
+        const masterStatus = snapshot.val();
+
+        console.log("Master status:", masterStatus);
+
+        if (masterStatus === "ON") {
+
+            document.getElementById("fanState").textContent = "ON";
+
+            document.getElementById("sprinklerState").textContent = "ON";
+
+        } else {
+
+            document.getElementById("fanState").textContent = "OFF";
+
+            document.getElementById("sprinklerState").textContent = "OFF";
         }
     }
 );
+
 
 // download activation history
 
@@ -494,7 +1844,4040 @@ link.click();
     URL.revokeObjectURL(url);
 };
 
+
+// login register logout
+
+function showAuthMessage(message, isError = true) {
+
+    const messageBox = document.getElementById("authMessage");
+
+    if (!messageBox) return;
+
+    messageBox.textContent = message;
+
+    messageBox.style.display = message ? "block" : "none";
+
+    messageBox.style.color =
+    isError ? "#dc3545" : "#198754";
+}
+
+window.showLogin = function() {
+
+    document.getElementById("loginForm").style.display = "block";
+
+    document.getElementById("registerForm").style.display = "none";
+
+    showAuthMessage("");
+};
+
+
+
+window.showRegister = function() {
+
+    document.getElementById("loginForm").style.display = "none";
+
+    document.getElementById("registerForm").style.display = "block";
+
+    showAuthMessage("");
+};
+
+
+// Login
+window.loginUser = async function(event) {
+
+    event.preventDefault();
+
+    const email =
+        document.getElementById("loginEmail").value.trim();
+
+    const password =
+        document.getElementById("loginPassword").value;
+
+    try {
+
+        const userCredential =
+            await signInWithEmailAndPassword(
+                auth,
+                email,
+                password
+            );
+
+        const user = userCredential.user;
+
+        console.log("LOGIN SUCCESSFUL");
+        console.log("Email:", user.email);
+        console.log("UID:", user.uid);
+
+
+// User role
+
+
+const role = await checkUserRole(user);
+
+console.log("Login role:", role);
+
+
+
+// Record logins
+
+const loginRecord = push(
+    ref(database, "loginHistory")
+);
+
+const now = new Date();
+
+await set(loginRecord, {
+
+    uid: user.uid,
+
+    email: user.email,
+
+    role: role,
+
+    date: now.toLocaleDateString(),
+
+    time: now.toLocaleTimeString(),
+
+    timestamp: Date.now()
+
+});
+
+console.log("Login history saved.");
+
+        showAuthMessage("");
+
+    } catch (error) {
+
+        console.error(
+            "Login error:",
+            error
+        );
+
+        showAuthMessage(
+            "Login failed: " +
+            getAuthErrorMessage(error)
+        );
+    }
+};
+
+// register
+window.registerUser = async function(event) {
+
+    event.preventDefault();
+
+    const email =
+        document.getElementById("registerEmail").value.trim();
+
+    const password =
+        document.getElementById("registerPassword").value;
+
+    const confirmPassword =
+        document.getElementById(
+            "registerConfirmPassword"
+        ).value;
+
+
+    
+    if (password !== confirmPassword) {
+
+        showAuthMessage(
+            "Passwords do not match."
+        );
+
+        return;
+    }
+
+
+    // password checking
+    if (password.length < 6) {
+
+        showAuthMessage(
+            "Password must be at least 6 characters."
+        );
+
+        return;
+    }
+
+
+    try {
+
+      const userCredential =
+    await createUserWithEmailAndPassword(
+        auth,
+        email,
+        password
+    );
+
+const user = userCredential.user;
+
+
+// ======================================================
+// CREATE USER ACCOUNT AS PENDING
+// ======================================================
+
+await set(
+    ref(database, "users/" + user.uid),
+    {
+        email: user.email,
+        role: "user",
+        approved: false
+    }
+);
+
+console.log(
+    "Pending user account created:",
+    user.uid
+);
+
+// Sign the user out after registration.
+// They must wait for admin approval.
+await signOut(auth);
+
+showAuthMessage(
+    "Account created successfully. Please wait for admin approval before logging in.",
+    false
+);
+
+
+console.log(
+    "User database record created:",
+    user.uid
+);
+
+
+showAuthMessage(
+    "Registration successful!",
+    false
+);
+
+    } catch (error) {
+
+        console.error(
+            "Registration error:",
+            error
+        );
+
+        showAuthMessage(
+            "Registration failed: " +
+            getAuthErrorMessage(error)
+        );
+    }
+};
+
+
+// Logout
+window.logoutUser = async function() {
+
+    try {
+
+        await signOut(auth);
+
+    } catch (error) {
+
+        console.error(
+            "Logout error:",
+            error
+        );
+
+        alert(
+            "Logout failed. Please try again."
+        );
+    }
+};
+ 
+
+
+// Load admin panel
+
+// ======================================================
+// LOAD USERS FOR ADMIN PANEL
+// ======================================================
+
+// ======================================================
+// ADMIN / USER ROLE
+// ======================================================
+
+async function checkUserRole(user) {
+
+    try {
+
+        const userRef = ref(
+            database,
+            "users/" + user.uid
+        );
+
+        const snapshot = await get(userRef);
+
+        if (snapshot.exists()) {
+
+            const userData = snapshot.val();
+
+            console.log(
+                "User data:",
+                userData
+            );
+
+            console.log(
+                "User role:",
+                userData.role
+            );
+
+            return userData.role || "user";
+
+        } else {
+
+            console.log(
+                "No user record found."
+            );
+
+            return "user";
+        }
+
+    } catch (error) {
+
+        console.error(
+            "Error checking user role:",
+            error
+        );
+
+        return "user";
+    }
+}
+
+
+// ======================================================
+// CHECK USER APPROVAL
+// ======================================================
+
+async function checkUserApproval(user) {
+
+    try {
+
+        const userRef = ref(
+            database,
+            "users/" + user.uid
+        );
+
+        const snapshot = await get(userRef);
+
+        if (!snapshot.exists()) {
+
+            console.log(
+                "No user record found."
+            );
+
+            return false;
+        }
+
+        const userData = snapshot.val();
+
+        // Admin accounts are always allowed
+        if (userData.role === "admin") {
+            return true;
+        }
+
+        // Normal users must be approved
+        return userData.approved === true;
+
+    } catch (error) {
+
+        console.error(
+            "Error checking user approval:",
+            error
+        );
+
+        return false;
+    }
+}
+
+
+// ======================================================
+// LOAD USERS FOR ADMIN PANEL
+// ======================================================
+
+function loadUsersForAdmin(currentAdminUid) {
+
+    const userTable =
+        document.getElementById("userTable");
+
+    if (!userTable) {
+
+        console.error(
+            "userTable not found."
+        );
+
+        return;
+    }
+
+    const usersRef =
+        ref(database, "users");
+
+    onValue(
+        usersRef,
+        (snapshot) => {
+
+            userTable.innerHTML = "";
+
+            if (!snapshot.exists()) {
+
+                userTable.innerHTML = `
+                <tr>
+                    <td colspan="4"
+                        style="
+                            padding:20px;
+                            text-align:center;
+                        ">
+                        No users found.
+                    </td>
+                </tr>
+                `;
+
+                return;
+            }
+
+            const users =
+                snapshot.val();
+
+            Object.entries(users).forEach(
+                ([uid, userData]) => {
+
+                    const email =
+                        userData.email || "-";
+
+                    const role =
+                        userData.role || "user";
+
+                    const approved =
+                        userData.approved === true;
+
+                    const row =
+                        document.createElement("tr");
+
+                    row.style.borderBottom =
+                        "1px solid #ddd";
+
+
+                    // ==================================================
+                    // CURRENT ADMIN
+                    // ==================================================
+
+                    if (uid === currentAdminUid) {
+
+                        row.innerHTML = `
+
+                        <td style="padding:12px;">
+                            ${email}
+                        </td>
+
+                        <td style="padding:12px;">
+                            <strong>ADMIN</strong>
+                        </td>
+
+                        <td style="padding:12px;">
+
+                            <span style="
+                                color:#16a34a;
+                                font-weight:bold;
+                            ">
+                                ✅ Approved
+                            </span>
+
+                        </td>
+
+                        <td style="padding:12px;">
+
+                            <span style="
+                                color:#777;
+                                font-weight:bold;
+                            ">
+                                Current Admin
+                            </span>
+
+                        </td>
+
+                        `;
+
+                    }
+
+
+                    // ==================================================
+                    // NORMAL USER
+                    // ==================================================
+
+                    else {
+
+                        row.innerHTML = `
+
+                        <td style="padding:12px;">
+                            ${email}
+                        </td>
+
+                        <td style="padding:12px;">
+                            ${role}
+                        </td>
+
+                        <td style="padding:12px;">
+
+                            ${
+                                approved
+                                ? `
+                                <span style="
+                                    color:#16a34a;
+                                    font-weight:bold;
+                                ">
+                                    ✅ Approved
+                                </span>
+                                `
+                                : `
+                                <span style="
+                                    color:#d97706;
+                                    font-weight:bold;
+                                ">
+                                    ⏳ Pending
+                                </span>
+                                `
+                            }
+
+                        </td>
+
+                        <td style="padding:12px;">
+
+                            ${
+                                !approved
+                                ? `
+                                <button
+                                    onclick="approveUserByAdmin('${uid}')"
+                                    style="
+                                        background:#16a34a;
+                                        color:white;
+                                        border:none;
+                                        padding:8px 14px;
+                                        border-radius:6px;
+                                        cursor:pointer;
+                                        margin-right:5px;
+                                    "
+                                >
+                                    ✅ Approve
+                                </button>
+                                `
+                                : `
+                                <button
+                                    onclick="revokeUserApproval('${uid}')"
+                                    style="
+                                        background:#64748b;
+                                        color:white;
+                                        border:none;
+                                        padding:8px 14px;
+                                        border-radius:6px;
+                                        cursor:pointer;
+                                        margin-right:5px;
+                                    "
+                                >
+                                    🚫 Revoke
+                                </button>
+                                `
+                            }
+
+                            <button
+                                onclick="logoutUserByAdmin('${uid}')"
+                                style="
+                                    background:#f59e0b;
+                                    color:white;
+                                    border:none;
+                                    padding:8px 14px;
+                                    border-radius:6px;
+                                    cursor:pointer;
+                                    margin-right:5px;
+                                "
+                            >
+                                🚪 Logout
+                            </button>
+
+                            <button
+                                onclick="deleteUserByAdmin('${uid}')"
+                                style="
+                                    background:#dc2626;
+                                    color:white;
+                                    border:none;
+                                    padding:8px 14px;
+                                    border-radius:6px;
+                                    cursor:pointer;
+                                "
+                            >
+                                🗑️ Delete
+                            </button>
+
+                        </td>
+
+                        `;
+                    }
+
+                    userTable.appendChild(row);
+
+                }
+            );
+        }
+    );
+}
+
+
+// ======================================================
+// ADMIN APPROVE USER
+// ======================================================
+
+window.approveUserByAdmin =
+async function(uid) {
+
+    try {
+
+        const currentAdmin =
+            auth.currentUser;
+
+        if (!currentAdmin) {
+
+            alert(
+                "Admin is not logged in."
+            );
+
+            return;
+        }
+
+        const adminRole =
+            await checkUserRole(
+                currentAdmin
+            );
+
+        if (adminRole !== "admin") {
+
+            alert(
+                "Only an admin can approve accounts."
+            );
+
+            return;
+        }
+
+        await set(
+            ref(
+                database,
+                "users/" + uid + "/approved"
+            ),
+            true
+        );
+
+        console.log(
+            "USER APPROVED:",
+            uid
+        );
+
+        alert(
+            "Account approved successfully."
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Approval error:",
+            error
+        );
+
+        alert(
+            "Failed to approve account."
+        );
+    }
+};
+
+
+// ======================================================
+// ADMIN REVOKE USER APPROVAL
+// ======================================================
+
+window.revokeUserApproval =
+async function(uid) {
+
+    try {
+
+        const currentAdmin =
+            auth.currentUser;
+
+        if (!currentAdmin) {
+
+            alert(
+                "Admin is not logged in."
+            );
+
+            return;
+        }
+
+        const adminRole =
+            await checkUserRole(
+                currentAdmin
+            );
+
+        if (adminRole !== "admin") {
+
+            alert(
+                "Only an admin can revoke approval."
+            );
+
+            return;
+        }
+
+        await set(
+            ref(
+                database,
+                "users/" + uid + "/approved"
+            ),
+            false
+        );
+
+        console.log(
+            "USER APPROVAL REVOKED:",
+            uid
+        );
+
+        alert(
+            "User approval has been revoked."
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Revoke approval error:",
+            error
+        );
+
+        alert(
+            "Failed to revoke approval."
+        );
+    }
+};
+
+// auth message error
+function getAuthErrorMessage(error) {
+
+    switch (error.code) {
+
+        case "auth/invalid-credential":
+        case "auth/wrong-password":
+        case "auth/user-not-found":
+
+            return "Incorrect email or password.";
+
+
+        case "auth/email-already-in-use":
+
+            return "This email is already registered.";
+
+
+        case "auth/invalid-email":
+
+            return "Please enter a valid email address.";
+
+
+        case "auth/weak-password":
+
+            return "Password is too weak. Use at least 6 characters.";
+
+
+        case "auth/too-many-requests":
+
+            return "Too many attempts. Please try again later.";
+
+
+        default:
+
+            return error.message ||
+                   "Please try again.";
+    }
+}
+
+
+// Auth state
+onAuthStateChanged(auth, async (user) => {
+
+    const loginScreen =
+        document.getElementById("loginScreen");
+
+    const dashboard =
+        document.getElementById("dashboardContent");
+
+    const userEmail =
+        document.getElementById("userEmail");
+
+    const normalDashboard =
+        document.getElementById("normalDashboard");
+
+    const adminPanel =
+        document.getElementById("adminPanel");
+
+
+    if (!loginScreen || !dashboard) {
+
+        console.error(
+            "loginScreen or dashboardContent not found."
+        );
+
+        return;
+    }
+
+
+    // user log
+
+    if (user) {
+
+        console.log(
+            "Firebase Authentication user:",
+            user.email
+        );
+
+        console.log(
+            "Firebase UID:",
+            user.uid
+        );
+
+
+        const role = await checkUserRole(user);
+
+
+        console.log(
+            "Logged-in user role:",
+            role
+        );
+// ======================================================
+// CHECK ACCOUNT APPROVAL
+// ======================================================
+
+const approved =
+    await checkUserApproval(user);
+
+console.log(
+    "Account approved:",
+    approved
+);
+
+// Block normal users who are not approved
+if (role !== "admin" && !approved) {
+
+    console.log(
+        "LOGIN BLOCKED - ACCOUNT NOT APPROVED"
+    );
+
+    await signOut(auth);
+
+    showAuthMessage(
+        "Your account is still waiting for admin approval."
+    );
+
+    return;
+}
+
+        // admin
+
+        if (role === "admin") {
+
+            console.log(
+                "ADMIN LOGIN SUCCESSFUL"
+            );
+
+
+            // Hide login screen
+            loginScreen.style.display = "none";
+
+
+            // Show dashboard container
+            dashboard.style.display = "block";
+
+
+            // Hide normal dashboard
+            if (normalDashboard) {
+
+                normalDashboard.style.display = "none";
+
+            }
+
+
+            // Show admin panel
+            if (adminPanel) {
+
+                adminPanel.style.display = "block";
+                // Load users for admin approval
+loadUsersForAdmin(user.uid);
+
+            }
+
+
+            // Display admin email
+            if (userEmail) {
+
+                userEmail.textContent =
+                    user.email + " | ADMIN";
+
+            }
+
+        }
+
+
+        // normal user
+
+        else {
+
+            console.log(
+                "NORMAL USER LOGIN"
+            );
+
+            loginScreen.style.display = "none";
+
+            dashboard.style.display = "block";
+
+            if (normalDashboard) {
+
+                normalDashboard.style.display = "block";
+
+            }
+
+            if (adminPanel) {
+
+                adminPanel.style.display = "none";
+
+            }
+
+            if (userEmail) {
+
+                userEmail.textContent =
+                user.email + " | USER";
+
+            }
+
+        }
+
+
+    // User logout
+
+    } else {
+
+        console.log(
+            "User is logged out."
+        );
+
+
+        
+        loginScreen.style.display = "flex";
+
+
+        
+        dashboard.style.display = "none";
+
+
+    
+        if (normalDashboard) {
+
+        normalDashboard.style.display = "none";
+
+        }
+
+        if (adminPanel) {
+
+            adminPanel.style.display = "none";
+
+        }
+
+        if (userEmail) {
+
+            userEmail.textContent = "";
+
+        }
+
+    }
+
+});
+
+// login history for admin
+
+function loadLoginHistory() {
+
+    const loginTable =
+        document.getElementById("loginTable");
+
+    if (!loginTable) {
+        return;
+    }
+
+    onValue(
+        ref(database, "loginHistory"),
+        (snapshot) => {
+
+        loginTable.innerHTML = "";
+
+        if (!snapshot.exists()) {
+
+        loginTable.innerHTML = `
+        <tr>
+        <td colspan="3" style="padding:15px;">
+            No login history found.
+        </td>
+        </tr>
+        `;
+
+        return;
+}
+
+    const history = snapshot.val();
+
+    Object.values(history)
+    .reverse()
+    .forEach(record => {
+
+    const row = document.createElement("tr");
+
+    row.innerHTML = `
+    <td style="padding:10px;">
+        ${record.email || "Unknown"}
+    </td>
+
+    <td style="padding:10px;">
+        ${record.role || "user"}
+    </td>
+
+    <td style="padding:10px;">
+        ${record.date || "-"}
+    </td>
+
+    <td style="padding:10px;">
+        ${record.time || "-"}
+    </td>
+`;
+
+    loginTable.appendChild(row);
+
+    });
+
+    }
+    );
+}
+
+loadLoginHistory();
+
+
+// ======================================================
+// ACTIVATION HISTORY
+// ======================================================
+
+let activationRecord = [];
+let currentFilter = "daily";
+
+
+
+// ======================================================
+// SAVE ACTIVATION RECORD
+// ======================================================
+
+function saveActivation(temperature, humidity) {
+
+    const now = new Date();
+
+    const newRecord = push(
+        ref(database, "activationHistory")
+    );
+
+    set(newRecord, {
+
+        date: now.toLocaleDateString(),
+        time: now.toLocaleTimeString(),
+
+        temperature: temperature,
+        humidity: humidity,
+
+        // IMPORTANT:
+        // Used to determine when the record moves
+        // from Daily -> Weekly -> Monthly
+        timestamp: Date.now()
+
+    })
+
+    .then(() => {
+
+        console.log("Activation saved!");
+
+    })
+
+    .catch((error) => {
+
+        console.error(
+            "Firebase save error:",
+            error
+        );
+
+    });
+}
+
+
+// ======================================================
+// LOAD ACTIVATION HISTORY
+// ======================================================
+
+onValue(
+    ref(database, "activationHistory"),
+    async (snapshot) => {
+
+        activationRecord = [];
+
+        if (snapshot.exists()) {
+
+            const data = snapshot.val();
+
+            Object.keys(data).forEach(key => {
+
+                activationRecord.push({
+
+                    id: key,
+
+                    ...data[key]
+
+                });
+
+            });
+
+        }
+
+
+        // ==============================================
+        // IMPORT OLD ACTIVATION RECORDS
+        // INTO ENVIRONMENT ANALYTICS
+        // ==============================================
+
+        await importPreviousEnvironmentRecords();
+
+
+        // ==============================================
+        // KEEP ACTIVATION HISTORY WORKING
+        // ==============================================
+
+        showRecord(currentFilter);
+
+    }
+);
+
+// ======================================================
+// TEMPERATURE & HUMIDITY ANALYTICS
+// ======================================================
+
+let temperatureHumidityChart = null;
+
+let dailyEnvironmentData = {};
+
+let selectedEnvironmentDate = null;
+
+// ======================================================
+// TEMPERATURE & HUMIDITY ANALYTICS
+// ======================================================
+
+
+// ======================================================
+// IMPORT PREVIOUS ACTIVATION RECORDS
+// ======================================================
+
+async function importPreviousEnvironmentRecords() {
+
+    console.log(
+        "Checking previous activation records..."
+    );
+
+
+    if (
+        !activationRecord ||
+        activationRecord.length === 0
+    ) {
+
+        console.log(
+            "No previous activation records found."
+        );
+
+        return;
+
+    }
+
+
+    const importPromises = [];
+
+
+    activationRecord.forEach(record => {
+
+        if (!record) {
+            return;
+        }
+
+
+        // Make sure the old record has
+        // the required information
+
+        if (
+            record.timestamp === undefined ||
+            record.temperature === undefined ||
+            record.humidity === undefined
+        ) {
+
+            return;
+
+        }
+
+
+        const timestamp =
+            Number(record.timestamp);
+
+
+        const temperature =
+            Number(record.temperature);
+
+
+        const humidity =
+            Number(record.humidity);
+
+
+        if (
+            !isFinite(timestamp) ||
+            timestamp <= 0 ||
+            !isFinite(temperature) ||
+            !isFinite(humidity)
+        ) {
+
+            return;
+
+        }
+
+
+        // Get the original date
+
+        const date =
+            new Date(timestamp);
+
+
+        const dateKey =
+            getEnvironmentDateKey(timestamp);
+
+
+        const hour =
+            date.getHours();
+
+
+        const hourKey =
+            String(hour).padStart(2, "0");
+
+
+        // ==============================================
+        // IMPORTANT
+        // Store the old record under its
+        // ORIGINAL DATE
+        // ==============================================
+
+        const recordRef =
+            ref(
+                database,
+                `dailyEnvironmentRecords/${dateKey}/readings/previous_${record.id}`
+            );
+
+
+        importPromises.push(
+
+            set(
+                recordRef,
+                {
+
+                    temperature:
+                        temperature,
+
+                    humidity:
+                        humidity,
+
+                    timestamp:
+                        timestamp,
+
+                    hour:
+                        hour,
+
+                    source:
+                        "previous_activation_record"
+
+                }
+            )
+
+        );
+
+
+        // Save the readable date
+
+        importPromises.push(
+
+            set(
+                ref(
+                    database,
+                    `dailyEnvironmentRecords/${dateKey}/date`
+                ),
+
+                dateKey
+
+            )
+
+        );
+
+    });
+
+
+    try {
+
+        await Promise.all(
+            importPromises
+        );
+
+
+        console.log(
+            "Previous activation records imported:",
+            activationRecord.length
+        );
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Failed to import previous activation records:",
+            error
+        );
+
+    }
+
+}
+
+
+
+// ======================================================
+// GET DATE KEY
+// Example: 2026-10-04
+// ======================================================
+
+function getEnvironmentDateKey(timestamp) {
+
+    const date = new Date(timestamp);
+
+    const year = date.getFullYear();
+
+    const month =
+        String(date.getMonth() + 1).padStart(2, "0");
+
+    const day =
+        String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+
+// ======================================================
+// GET HOUR
+// ======================================================
+
+function getEnvironmentHour(timestamp) {
+
+    const date = new Date(timestamp);
+
+    return date.getHours();
+
+}
+
+
+// ======================================================
+// FORMAT DATE
+// ======================================================
+
+function formatEnvironmentDate(dateKey) {
+
+    const parts = dateKey.split("-");
+
+    if (parts.length !== 3) {
+        return dateKey;
+    }
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]) - 1;
+    const day = Number(parts[2]);
+
+    const date = new Date(
+        year,
+        month,
+        day
+    );
+
+    return date.toLocaleDateString(
+        "en-US",
+        {
+            year: "numeric",
+            month: "long",
+            day: "numeric"
+        }
+    );
+}
+
+
+// ======================================================
+// FORMAT HOUR
+// ======================================================
+
+function formatEnvironmentHour(hour) {
+
+    const date = new Date();
+
+    date.setHours(hour);
+    date.setMinutes(0);
+    date.setSeconds(0);
+
+    return date.toLocaleTimeString(
+        "en-US",
+        {
+            hour: "numeric",
+            minute: "2-digit"
+        }
+    );
+
+}
+
+
+// ======================================================
+// SAVE PERMANENT ENVIRONMENT READING
+// ======================================================
+
+async function saveEnvironmentReading() {
+
+    try {
+
+        // ==================================================
+        // CHECK SENSOR VALUES
+        // ==================================================
+
+        if (
+            currentTemperature === null ||
+            currentHumidity === null
+        ) {
+
+            console.log(
+                "Environment reading skipped - sensor values unavailable."
+            );
+
+            return;
+
+        }
+
+
+        const temperature =
+            Number(currentTemperature);
+
+        const humidity =
+            Number(currentHumidity);
+
+
+        // ==================================================
+        // VALIDATE SENSOR VALUES
+        // ==================================================
+
+        if (
+            !isFinite(temperature) ||
+            !isFinite(humidity)
+        ) {
+
+            console.log(
+                "Environment reading skipped - invalid values."
+            );
+
+            return;
+
+        }
+
+
+        // ==================================================
+        // CURRENT DATE AND TIME
+        // ==================================================
+
+        const now =
+            new Date();
+
+
+        const dateKey =
+            getEnvironmentDateKey(
+                now.getTime()
+            );
+
+
+        const hour =
+            now.getHours();
+
+
+        // ==================================================
+        // IMPORTANT:
+        //
+        // CREATE A NEW UNIQUE FIREBASE RECORD
+        //
+        // PUSH() GENERATES A UNIQUE ID.
+        //
+        // THIS MEANS:
+        // - NO OVERWRITING
+        // - NO REUSING THE HOUR AS THE ID
+        // - EVERY READING IS STORED SEPARATELY
+        // ==================================================
+
+        const readingsRef =
+            ref(
+                database,
+                `dailyEnvironmentRecords/${dateKey}/readings`
+            );
+
+
+        const newReadingRef =
+            push(readingsRef);
+
+
+        // ==================================================
+        // SAVE PERMANENT ENVIRONMENT RECORD
+        // ==================================================
+
+        await set(
+            newReadingRef,
+            {
+
+                date:
+                    dateKey,
+
+                hour:
+                    hour,
+
+                time:
+                    now.toLocaleTimeString(),
+
+                temperature:
+                    temperature,
+
+                humidity:
+                    humidity,
+
+                timestamp:
+                    now.getTime(),
+
+                source:
+                    "permanent_environment_record"
+
+            }
+        );
+
+
+        // ==================================================
+        // SAVE READABLE DATE
+        //
+        // THIS DOES NOT REPLACE THE READINGS.
+        // IT ONLY STORES THE DISPLAY DATE.
+        // ==================================================
+
+        await set(
+            ref(
+                database,
+                `dailyEnvironmentRecords/${dateKey}/date`
+            ),
+            formatEnvironmentDate(
+                dateKey
+            )
+        );
+
+
+        // ==================================================
+        // CONFIRMATION
+        // ==================================================
+
+        console.log(
+            "PERMANENT ENVIRONMENT RECORD SAVED:",
+            newReadingRef.key,
+            dateKey,
+            "Hour:",
+            hour,
+            "Temperature:",
+            temperature,
+            "Humidity:",
+            humidity
+        );
+
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Permanent environment record save error:",
+            error
+        );
+
+    }
+
+}
+
+// ======================================================
+// LOAD DAILY ENVIRONMENT RECORDS
+// ======================================================
+
+onValue(
+    ref(
+        database,
+        "dailyEnvironmentRecords"
+    ),
+    (snapshot) => {
+
+        dailyEnvironmentData = {};
+
+
+        if (!snapshot.exists()) {
+
+            console.log(
+                "No daily environmental records found."
+            );
+
+            selectedEnvironmentDate = null;
+
+            displayDailyEnvironmentRecords();
+
+            updateTemperatureHumidityChart();
+
+            return;
+
+        }
+
+
+        dailyEnvironmentData =
+            snapshot.val();
+
+
+        console.log(
+            "Daily environmental records:",
+            dailyEnvironmentData
+        );
+
+
+        const dates =
+            Object.keys(
+                dailyEnvironmentData
+            ).sort();
+
+
+        // Select newest date automatically
+        if (
+            dates.length > 0 &&
+            (
+                !selectedEnvironmentDate ||
+                !dailyEnvironmentData[
+                    selectedEnvironmentDate
+                ]
+            )
+        ) {
+
+            selectedEnvironmentDate =
+                dates[dates.length - 1];
+
+        }
+
+
+        displayDailyEnvironmentRecords();
+
+        updateTemperatureHumidityChart();
+
+    }
+);
+
+
+// ======================================================
+// DISPLAY DAILY ENVIRONMENTAL RECORDS
+// ======================================================
+
+function displayDailyEnvironmentRecords() {
+
+    const table =
+        document.getElementById(
+            "dailyEnvironmentTable"
+        );
+
+
+    if (!table) {
+
+        console.error(
+            "dailyEnvironmentTable not found."
+        );
+
+        return;
+
+    }
+
+
+    table.innerHTML = "";
+
+
+    const dates =
+        Object.keys(
+            dailyEnvironmentData
+        ).sort(
+            (a, b) =>
+                new Date(b) - new Date(a)
+        );
+
+
+    if (dates.length === 0) {
+
+        table.innerHTML = `
+
+            <tr>
+
+                <td
+                    colspan="4"
+                    style="
+                        padding:20px;
+                        text-align:center;
+                        color:#777;
+                    "
+                >
+                    No environmental records found.
+                </td>
+
+            </tr>
+
+        `;
+
+        return;
+
+    }
+
+
+    dates.forEach(
+        (dateKey) => {
+
+            const dayData =
+                dailyEnvironmentData[
+                    dateKey
+                ];
+
+
+            const readings =
+                dayData &&
+                dayData.readings
+                    ? dayData.readings
+                    : {};
+
+
+            const records =
+                Object.values(
+                    readings
+                );
+
+
+            const validRecords =
+                records.filter(
+                    record =>
+                        record &&
+                        !isNaN(
+                            Number(
+                                record.temperature
+                            )
+                        ) &&
+                        !isNaN(
+                            Number(
+                                record.humidity
+                            )
+                        )
+                );
+
+
+            let averageTemperature = 0;
+
+            let averageHumidity = 0;
+
+
+            if (
+                validRecords.length > 0
+            ) {
+
+                averageTemperature =
+                    validRecords.reduce(
+                        (
+                            total,
+                            record
+                        ) =>
+                            total +
+                            Number(
+                                record.temperature
+                            ),
+                        0
+                    ) /
+                    validRecords.length;
+
+
+                averageHumidity =
+                    validRecords.reduce(
+                        (
+                            total,
+                            record
+                        ) =>
+                            total +
+                            Number(
+                                record.humidity
+                            ),
+                        0
+                    ) /
+                    validRecords.length;
+
+            }
+
+
+            const row =
+                document.createElement(
+                    "tr"
+                );
+
+
+            row.style.borderBottom =
+                "1px solid #e2e8f0";
+
+
+            row.innerHTML = `
+
+                <td style="
+                    padding:12px;
+                ">
+                    ${formatEnvironmentDate(dateKey)}
+                </td>
+
+
+                <td style="
+                    padding:12px;
+                    text-align:center;
+                ">
+                    ${
+                        validRecords.length > 0
+                        ? averageTemperature.toFixed(1) + "°C"
+                        : "-"
+                    }
+                </td>
+
+
+                <td style="
+                    padding:12px;
+                    text-align:center;
+                ">
+                    ${
+                        validRecords.length > 0
+                        ? averageHumidity.toFixed(1) + "%"
+                        : "-"
+                    }
+                </td>
+
+
+                <td style="
+                    padding:12px;
+                    text-align:center;
+                ">
+
+                    <button
+                        onclick="
+                            selectEnvironmentDate('${dateKey}')
+                        "
+                        style="
+                            background:#2563eb;
+                            color:white;
+                            border:none;
+                            padding:8px 14px;
+                            border-radius:6px;
+                            cursor:pointer;
+                        "
+                    >
+                        View
+                    </button>
+
+                </td>
+
+            `;
+
+
+            table.appendChild(row);
+
+        }
+    );
+
+}
+
+
+// ======================================================
+// SELECT DATE
+// ======================================================
+
+window.selectEnvironmentDate =
+function(dateKey) {
+
+    selectedEnvironmentDate =
+        dateKey;
+
+
+    const selectedDateElement =
+        document.getElementById(
+            "selectedEnvironmentDate"
+        );
+
+
+    if (selectedDateElement) {
+
+        selectedDateElement.textContent =
+            formatEnvironmentDate(
+                dateKey
+            );
+
+    }
+
+
+    updateTemperatureHumidityChart();
+
+};
+
+
+// ======================================================
+// UPDATE 24-HOUR GRAPH
+// ======================================================
+
+function updateTemperatureHumidityChart() {
+
+    const canvas =
+        document.getElementById(
+            "temperatureHumidityChart"
+        );
+
+
+    if (!canvas) {
+
+        console.error(
+            "temperatureHumidityChart not found."
+        );
+
+        return;
+
+    }
+
+
+    if (
+        !selectedEnvironmentDate
+    ) {
+
+        return;
+
+    }
+
+
+    const dayData =
+        dailyEnvironmentData[
+            selectedEnvironmentDate
+        ];
+
+
+    if (!dayData) {
+
+        return;
+
+    }
+
+
+    const readings =
+        dayData.readings || {};
+
+
+    // ==================================================
+    // 24 HOURS
+    // ==================================================
+
+    const labels = [];
+
+    const temperatureData = [];
+
+    const humidityData = [];
+
+
+    // ==================================================
+// PREPARE LATEST RECORD FOR EACH HOUR
+//
+// IMPORTANT:
+// ALL RECORDS REMAIN IN FIREBASE.
+//
+// This only chooses which record to DISPLAY
+// for each hour on the graph.
+// ==================================================
+
+const latestByHour = {};
+
+Object.values(readings).forEach(
+    record => {
+
+        if (!record) {
+            return;
+        }
+
+        const temperature =
+            Number(record.temperature);
+
+        const humidity =
+            Number(record.humidity);
+
+        const timestamp =
+            Number(record.timestamp || 0);
+
+        if (
+            !isFinite(temperature) ||
+            !isFinite(humidity)
+        ) {
+            return;
+        }
+
+        let hour;
+
+        if (
+            record.hour !== undefined &&
+            record.hour !== null
+        ) {
+
+            hour =
+                Number(record.hour);
+
+        } else {
+
+            hour =
+                new Date(
+                    timestamp
+                ).getHours();
+
+        }
+
+        if (
+            !Number.isInteger(hour) ||
+            hour < 0 ||
+            hour > 23
+        ) {
+            return;
+        }
+
+        // Keep the newest reading for this hour
+        // ONLY FOR GRAPH DISPLAY.
+        //
+        // Older records are NOT deleted.
+
+        if (
+            !latestByHour[hour] ||
+            timestamp >
+            Number(
+                latestByHour[hour].timestamp || 0
+            )
+        ) {
+
+            latestByHour[hour] =
+                record;
+
+        }
+
+    }
+);
+
+
+// ==================================================
+// CREATE 24-HOUR GRAPH DATA
+// ==================================================
+
+
+
+
+for (
+    let hour = 0;
+    hour < 24;
+    hour++
+) {
+
+    labels.push(
+        formatEnvironmentHour(
+            hour
+        )
+    );
+
+
+    const record =
+        latestByHour[hour];
+
+
+    if (record) {
+
+        const temperature =
+            Number(record.temperature);
+
+        const humidity =
+            Number(record.humidity);
+
+
+        temperatureData.push(
+            isFinite(temperature)
+                ? temperature
+                : null
+        );
+
+
+        humidityData.push(
+            isFinite(humidity)
+                ? humidity
+                : null
+        );
+
+    } else {
+
+        // No reading for this hour
+
+        temperatureData.push(null);
+
+        humidityData.push(null);
+
+    }
+
+}
+
+
+    // ==================================================
+    // UPDATE SELECTED DATE
+    // ==================================================
+
+    const selectedDateElement =
+        document.getElementById(
+            "selectedEnvironmentDate"
+        );
+
+
+    if (selectedDateElement) {
+
+        selectedDateElement.textContent =
+            formatEnvironmentDate(
+                selectedEnvironmentDate
+            );
+
+    }
+
+
+    // ==================================================
+    // DESTROY OLD CHART
+    // ==================================================
+
+    if (
+        temperatureHumidityChart
+    ) {
+
+        temperatureHumidityChart.destroy();
+
+    }
+
+
+    // ==================================================
+    // CREATE NEW CHART
+    // ==================================================
+
+    temperatureHumidityChart =
+        new Chart(
+            canvas,
+            {
+
+                type: "line",
+
+                data: {
+
+                    labels: labels,
+
+                    datasets: [
+
+                        {
+
+                            label:
+                                "Temperature (°C)",
+
+                            data:
+                                temperatureData,
+
+                            borderColor:
+                                "#ef4444",
+
+                            backgroundColor:
+                                "rgba(239,68,68,0.1)",
+
+                            borderWidth: 2,
+
+                            tension: 0.3,
+
+                            spanGaps: true,
+
+                            yAxisID:
+                                "temperatureAxis"
+
+                        },
+
+
+                        {
+
+                            label:
+                                "Humidity (%)",
+
+                            data:
+                                humidityData,
+
+                            borderColor:
+                                "#2563eb",
+
+                            backgroundColor:
+                                "rgba(37,99,235,0.1)",
+
+                            borderWidth: 2,
+
+                            tension: 0.3,
+
+                            spanGaps: true,
+
+                            yAxisID:
+                                "humidityAxis"
+
+                        }
+
+                    ]
+
+                },
+
+
+                options: {
+
+                    responsive: true,
+
+                    maintainAspectRatio:
+                        false,
+
+
+                    interaction: {
+
+                        mode: "index",
+
+                        intersect: false
+
+                    },
+
+
+                    plugins: {
+
+                        legend: {
+
+                            display: true,
+
+                            position: "top"
+
+                        },
+
+
+                        tooltip: {
+
+                            enabled: true
+
+                        }
+
+                    },
+
+
+                    scales: {
+
+                        x: {
+
+                            title: {
+
+                                display: true,
+
+                                text:
+                                    "Time"
+
+                            },
+
+                            ticks: {
+
+                                autoSkip: false,
+
+                                maxRotation: 45,
+
+                                minRotation: 45
+
+                            }
+
+                        },
+
+
+                        temperatureAxis: {
+
+                            type: "linear",
+
+                            position: "left",
+
+                            title: {
+
+                                display: true,
+
+                                text:
+                                    "Temperature (°C)"
+
+                            }
+
+                        },
+
+
+                        humidityAxis: {
+
+                            type: "linear",
+
+                            position: "right",
+
+                            title: {
+
+                                display: true,
+
+                                text:
+                                    "Humidity (%)"
+
+                            },
+
+                            grid: {
+
+                                drawOnChartArea:
+                                    false
+
+                            }
+
+                        }
+
+                    }
+
+                }
+
+            }
+        );
+
+}
+
+// ======================================================
+// INITIAL ENVIRONMENT READING
+// ======================================================
+
+setTimeout(
+    () => {
+
+        saveEnvironmentReading();
+
+    },
+    5000
+);
+
+
+// ======================================================
+// SAVE ENVIRONMENT READING EVERY HOUR
+// ======================================================
+
+setInterval(
+    () => {
+
+        saveEnvironmentReading();
+
+    },
+    60 * 60 * 1000
+);
+   
+// ======================================================
+// SHOW DAILY / WEEKLY / MONTHLY
+// ======================================================
+
+window.showRecord = function(filter) {
+
+    currentFilter = filter;
+
+    const table =
+        document.getElementById(
+            "activationTable"
+        );
+
+    const title =
+        document.getElementById(
+            "periodTitle"
+        );
+
+
+    if (!table || !title) {
+
+        console.error(
+            "Activation history elements not found."
+        );
+
+        return;
+
+    }
+
+
+    // ==================================================
+    // TITLE
+    // ==================================================
+
+    if (filter === "daily") {
+
+        title.textContent =
+            "Daily Activation History";
+
+    }
+
+    else if (filter === "weekly") {
+
+        title.textContent =
+            "Weekly Activation History";
+
+    }
+
+    else if (filter === "monthly") {
+
+        title.textContent =
+            "Monthly Activation History";
+
+    }
+
+
+    table.innerHTML = "";
+
+
+    // Current time
+    const now = Date.now();
+
+
+    // ==================================================
+    // FILTER RECORDS
+    // ==================================================
+
+    const records =
+        activationRecord.filter(item => {
+
+
+            // Ignore records without timestamp
+            if (!item.timestamp) {
+
+                console.warn(
+                    "Record has no timestamp:",
+                    item
+                );
+
+                return false;
+
+            }
+
+
+            // Convert Firebase timestamp
+            const recordTime =
+                Number(item.timestamp);
+
+
+            // Age in days
+            const age =
+                (now - recordTime) /
+                (1000 * 60 * 60 * 24);
+
+
+            console.log(
+                "Record:",
+                item.date,
+                "| Age:",
+                age.toFixed(2),
+                "days"
+            );
+
+
+            // ==========================================
+            // DAILY
+            // 0 to less than 7 days
+            // ==========================================
+
+            if (filter === "daily") {
+
+                return age >= 0 && age < 7;
+
+            }
+
+
+            // ==========================================
+            // WEEKLY
+            // 7 to less than 30 days
+            // ==========================================
+
+            if (filter === "weekly") {
+
+                return age >= 7 && age < 30;
+
+            }
+
+
+            // ==========================================
+            // MONTHLY
+            // 30 DAYS AND OLDER
+            // ==========================================
+
+            if (filter === "monthly") {
+
+                return age >= 30;
+
+            }
+
+
+            return false;
+
+        });
+
+
+    // ==================================================
+    // SORT NEWEST FIRST
+    // ==================================================
+
+    records.sort((a, b) => {
+
+        return (
+            Number(b.timestamp) -
+            Number(a.timestamp)
+        );
+
+    });
+
+
+    // ==================================================
+    // NO RECORD
+    // ==================================================
+
+    if (records.length === 0) {
+
+        table.innerHTML = `
+            <tr>
+                <td colspan="4"
+                    style="
+                        padding: 15px;
+                        text-align: center;
+                    ">
+                    No activation record found.
+                </td>
+            </tr>
+        `;
+
+        return;
+
+    }
+
+
+    // ==================================================
+    // DISPLAY RECORDS
+    // ==================================================
+
+    records.forEach(item => {
+
+        table.innerHTML += `
+
+            <tr>
+
+                <td style="padding: 10px;">
+                    ${item.date || ""}
+                </td>
+
+                <td style="padding: 10px;">
+                    ${item.time || ""}
+                </td>
+
+                <td style="padding: 10px;">
+                    ${item.temperature ?? ""}
+                </td>
+
+                <td style="padding: 10px;">
+                    ${item.humidity ?? ""}
+                </td>
+
+            </tr>
+
+        `;
+
+    });
+
+};
+
+// ======================================================
+// SHOW THRESHOLD FORM
+// ======================================================
+
+window.showThreshold = function() {
+
+    const form = document.getElementById("thresholdBox");
+
+    if (!form) {
+        console.error("thresholdBox NOT FOUND!");
+        return;
+    }
+
+    form.style.display = "block";
+
+    console.log("Threshold form opened!");
+};
+
+
+window.closeThreshold = function() {
+    const form = document.getElementById("thresholdBox");
+
+    if (form) {
+        form.style.display = "none";
+        console.log("Threshold form closed.");
+    }
+};
+
+// ======================================================
+// SAVE THRESHOLD
+// ======================================================
+
+window.saveThreshold = async function () {
+
+    const tempInput = document.getElementById("tempThreshold");
+    const humidityInput = document.getElementById("humidityThreshold");
+
+    if (!tempInput || !humidityInput) {
+        console.error("Threshold input not found!");
+        return;
+    }
+
+    const temperature = Number(tempInput.value);
+    const humidity = Number(humidityInput.value);
+
+    // Check if values are valid
+    if (isNaN(temperature) || isNaN(humidity)) {
+        alert("Please enter both temperature and humidity thresholds.");
+        return;
+    }
+
+    try {
+
+        // Save temperature threshold
+        await set(
+            ref(database, "setting/temperatureThreshold"),
+            temperature
+        );
+
+        // Save humidity threshold
+        await set(
+            ref(database, "setting/humidityThreshold"),
+            humidity
+        );
+
+        console.log("Temperature threshold saved:", temperature);
+        console.log("Humidity threshold saved:", humidity);
+
+        alert(
+            "Threshold saved successfully!\n\n" +
+            "Temperature: " + temperature + " °C\n" +
+            "Humidity: " + humidity + " %"
+        );
+
+        // Close popup
+        const form = document.getElementById("thresholdBox");
+
+        if (form) {
+            form.style.display = "none";
+        }
+
+    } catch (error) {
+
+        console.error("Failed to save threshold:", error);
+
+        alert("Failed to save threshold. Check the console.");
+    }
+};
+
+// ======================================================
+// COOLING TIMER SYSTEM
+// ======================================================
+
+
+// ======================================================
+// CHECK CURRENT COOLING STATE
+// ======================================================
+
+async function updateCoolingCycleState() {
+
+    try {
+
+        const fanSnapshot = await get(
+            ref(database, "devices/fan")
+        );
+
+        const pumpSnapshot = await get(
+            ref(database, "devices/water_pump")
+        );
+
+        const fanOn =
+            fanSnapshot.exists() &&
+            fanSnapshot.val() === true;
+
+        const pumpOn =
+            pumpSnapshot.exists() &&
+            pumpSnapshot.val() === true;
+
+        const timerRunning =
+            sprinklerStart > 0 ||
+            fanStart > 0;
+
+        coolingCycleRunning =
+            fanOn ||
+            pumpOn ||
+            timerRunning;
+
+        console.log(
+            "Cooling cycle running:",
+            coolingCycleRunning
+        );
+
+        if (coolingCycleRunning) {
+            manualCoolingActive = true;
+        }
+
+    } catch (error) {
+
+        console.error(
+            "Error checking cooling state:",
+            error
+        );
+    }
+}
+
+
+// ======================================================
+// FORMAT COUNTDOWN
+// ======================================================
+
+function formatCountdown(milliseconds) {
+
+    let totalSeconds =
+        Math.ceil(milliseconds / 1000);
+
+    if (totalSeconds < 0) {
+        totalSeconds = 0;
+    }
+
+    const minutes =
+        Math.floor(totalSeconds / 60);
+
+    const seconds =
+        totalSeconds % 60;
+
+    return (
+        String(minutes).padStart(2, "0") +
+        ":" +
+        String(seconds).padStart(2, "0")
+    );
+}
+
+
+// ======================================================
+// UPDATE COUNTDOWN
+// ======================================================
+
+
+function updateCountdowns() {
+
+    // ==================================================
+    // MASTER OFF = STOP ALL WEBSITE TIMERS
+    // ==================================================
+
+    if (masterStatus !== "ON") {
+
+        sprinklerStart = 0;
+        fanStart = 0;
+        automaticRestUntil = 0;
+
+        coolingMode = "idle";
+
+        coolingActive = false;
+        coolingCycleRunning = false;
+        manualCoolingActive = false;
+
+        automaticCoolingCycle = false;
+        manualCoolingCycle = false;
+        fanCycleStarted = false;
+
+        const sprinklerCard =
+            document.getElementById("sprinklerTimerCard");
+
+        const sprinklerDisplay =
+            document.getElementById("sprinklerCountdown");
+
+        const fanCard =
+            document.getElementById("fanTimerCard");
+
+        const fanDisplay =
+            document.getElementById("fanCountdown");
+
+        const restCard =
+            document.getElementById("automaticRestTimerCard");
+
+        const restDisplay =
+            document.getElementById("automaticRestCountdown");
+
+        if (sprinklerCard) {
+            sprinklerCard.style.display = "none";
+        }
+
+        if (sprinklerDisplay) {
+            sprinklerDisplay.textContent = "01:30";
+        }
+
+        if (fanCard) {
+            fanCard.style.display = "none";
+        }
+
+        if (fanDisplay) {
+            fanDisplay.textContent = "15:00";
+        }
+
+        if (restCard) {
+            restCard.style.display = "none";
+        }
+
+        if (restDisplay) {
+            restDisplay.textContent = "05:00";
+        }
+
+        updateManualCoolingButton(false);
+
+        return;
+    }
+
+    // Get HTML elements every time.
+    // This prevents undefined timer-card variables.
+
+    const sprinklerTimerCard =
+        document.getElementById("sprinklerTimerCard");
+
+    const sprinklerCountdown =
+        document.getElementById("sprinklerCountdown");
+
+    const fanTimerCard =
+        document.getElementById("fanTimerCard");
+
+    const fanCountdown =
+        document.getElementById("fanCountdown");
+
+const automaticRestTimerCard =
+    document.getElementById("automaticRestTimerCard");
+
+const automaticRestCountdown =
+    document.getElementById("automaticRestCountdown");
+    // Make sure HTML exists
+
+    if (
+        !sprinklerTimerCard ||
+    !sprinklerCountdown ||
+    !fanTimerCard ||
+    !fanCountdown ||
+    !automaticRestTimerCard ||
+    !automaticRestCountdown
+    ) {
+
+        console.error(
+            "Cooling timer HTML elements not found."
+        );
+
+        return;
+    }
+
+// ==================================================
+// MASTER SWITCH OFF = NO TIMER IS ALLOWED
+// ==================================================
+
+if (masterStatus !== "ON") {
+
+    sprinklerStart = 0;
+    fanStart = 0;
+    automaticRestUntil = 0;
+
+    coolingMode = "idle";
+
+    coolingCycleRunning = false;
+    coolingActive = false;
+    manualCoolingActive = false;
+
+    automaticCoolingCycle = false;
+    manualCoolingCycle = false;
+    fanCycleStarted = false;
+
+    // Hide sprinkler timer
+    sprinklerTimerCard.style.display = "none";
+    sprinklerCountdown.textContent = "01:30";
+
+    // Hide fan timer
+    fanTimerCard.style.display = "none";
+    fanCountdown.textContent = "15:00";
+
+    // Hide REST timer
+    automaticRestTimerCard.style.display = "none";
+    automaticRestCountdown.textContent = "05:00";
+
+    updateManualCoolingButton(false);
+
+    return;
+}
+    // ==================================================
+    // SPRINKLER TIMER
+    // ==================================================
+
+    if (sprinklerStart > 0) {
+
+        const elapsed =
+            Date.now() - sprinklerStart;
+
+        const remaining =
+            SPRINKLER_DURATION - elapsed;
+
+
+        if (remaining > 0) {
+
+            sprinklerTimerCard.style.display =
+                "block";
+
+            sprinklerCountdown.textContent =
+                formatCountdown(remaining);
+
+        }else {
+
+    sprinklerTimerCard.style.display =
+        "none";
+
+    sprinklerCountdown.textContent =
+        "01:30";
+
+}
+
+    } else {
+
+        sprinklerTimerCard.style.display =
+            "none";
+
+        sprinklerCountdown.textContent =
+            "01:30";
+    }
+
+
+   // ==================================================
+// FAN TIMER
+// ==================================================
+
+if (fanStart > 0) {
+
+    const elapsed =
+        Date.now() - fanStart;
+
+    const remaining =
+        FAN_DURATION - elapsed;
+
+
+    // ==============================================
+    // FAN TIMER STILL RUNNING
+    // ==============================================
+
+    if (remaining > 0) {
+
+        fanTimerCard.style.display =
+            "block";
+
+        fanCountdown.textContent =
+            formatCountdown(remaining);
+
+    }
+
+
+    // ==============================================
+    // FAN TIMER FINISHED
+    // ==============================================
+
+    else {
+
+        fanTimerCard.style.display =
+            "none";
+
+        fanCountdown.textContent =
+            "15:00";
+
+
+        // ==========================================
+        // START REST TIMER
+        // ==========================================
+
+       if (
+    masterStatus === "ON" &&
+    automaticRestUntil <= 0 &&
+    (
+        coolingMode === "manual" ||
+        coolingMode === "automatic"
+    )
+) {
+
+            console.log(
+                "FAN TIMER FINISHED."
+            );
+
+            console.log(
+                "STARTING 5-MINUTE REST TIMER."
+            );
+
+
+            // --------------------------------------
+            // CREATE REST END TIME
+            // --------------------------------------
+
+            automaticRestUntil =
+                Date.now() + AUTOMATIC_REST_DURATION;
+
+
+            // --------------------------------------
+            // CHANGE MODE TO REST
+            // --------------------------------------
+
+            coolingMode = "rest";
+
+
+            // --------------------------------------
+            // SAVE REST TIMER TO FIREBASE
+            // --------------------------------------
+
+            set(
+                restUntilRef,
+                automaticRestUntil
+            )
+            .then(() => {
+
+                return set(
+                    coolingModeRef,
+                    "rest"
+                );
+
+            })
+            .then(() => {
+
+                console.log(
+                    "REST TIMER SAVED TO FIREBASE."
+                );
+
+                console.log(
+                    "Rest will finish at:",
+                    new Date(automaticRestUntil)
+                );
+
+
+                // ----------------------------------
+                // SHOW REST TIMER IMMEDIATELY
+                // ----------------------------------
+
+                automaticRestTimerCard.style.display =
+                    "block";
+
+                automaticRestCountdown.textContent =
+                    formatCountdown(
+                        automaticRestUntil - Date.now()
+                    );
+
+
+                // ----------------------------------
+                // STOP COOLING STATE
+                // ----------------------------------
+
+                coolingCycleRunning = false;
+                coolingActive = false;
+                manualCoolingActive = false;
+
+                automaticCoolingCycle = false;
+                manualCoolingCycle = false;
+                fanCycleStarted = false;
+
+
+                updateManualCoolingButton(false);
+
+            })
+            .catch((error) => {
+
+                console.error(
+                    "Failed to save REST timer:",
+                    error
+                );
+
+            });
+
+        }
+
+    }
+
+} else {
+
+    fanTimerCard.style.display =
+        "none";
+
+    fanCountdown.textContent =
+        "15:00";
+}
+// ==================================================
+// AUTOMATIC REST TIMER
+// ==================================================
+
+if (automaticRestUntil > 0) {
+
+    const restRemaining =
+        automaticRestUntil - Date.now();
+
+    if (restRemaining > 0) {
+
+        automaticRestTimerCard.style.display =
+            "block";
+
+        automaticRestCountdown.textContent =
+            formatCountdown(restRemaining);
+
+    }
+
+   else {
+
+    automaticRestTimerCard.style.display =
+        "none";
+
+    automaticRestCountdown.textContent =
+        "05:00";
+
+    console.log(
+        "======================================"
+    );
+
+    console.log(
+        "REST TIMER FINISHED."
+    );
+
+    console.log(
+        "Returning cooling system to IDLE."
+    );
+
+    automaticRestUntil = 0;
+
+    coolingMode = "idle";
+
+    automaticCoolingCycle = false;
+    manualCoolingCycle = false;
+    fanCycleStarted = false;
+
+    coolingCycleRunning = false;
+    coolingActive = false;
+    manualCoolingActive = false;
+
+
+    // ==============================================
+    // CLEAR REST STATE IN FIREBASE
+    // ==============================================
+
+    Promise.all([
+
+        set(
+            restUntilRef,
+            0
+        ),
+
+        set(
+            coolingModeRef,
+            "idle"
+        )
+
+    ])
+    .then(() => {
+
+        console.log(
+            "Firebase REST state cleared."
+        );
+
+        updateManualCoolingButton(false);
+
+        // Check whether temperature/humidity
+        // still require another cooling cycle.
+        checkAutomaticCooling();
+
+    })
+    .catch((error) => {
+
+        console.error(
+            "Failed to finish REST timer:",
+            error
+        );
+
+    });
+
+}
+
+}
+
+else {
+
+    automaticRestTimerCard.style.display =
+        "none";
+
+    automaticRestCountdown.textContent =
+        "05:00";
+}
+}
+
+
+// ======================================================
+// START COUNTDOWN AFTER HTML IS LOADED
+// ======================================================
+
+document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+
+        // Show current timer immediately
+        updateCountdowns();
+
+        // Restore persistent cooling state
+        // before automatic activation is allowed.
+        initializeCoolingState();
+
+        // Update countdown every second
+        setInterval(
+            updateCountdowns,
+            1000
+        );
+
+    }
+);
+
+
+// ======================================================
+// COOLING LOCK FROM ESP32
+// ======================================================
+
+onValue(
+    ref(database, "devices/coolingLocked"),
+    (snapshot) => {
+
+        coolingLocked =
+            snapshot.val() === true;
+
+        console.log(
+            "Cooling locked:",
+            coolingLocked
+        );
+    }
+);
+
+
+// ======================================================
+// FAN STATUS
+// ======================================================
+
+onValue(
+    ref(database, "devices/fan"),
+    (snapshot) => {
+
+        updateCoolingCycleState();
+
+    }
+);
+
+
+// ======================================================
+// WATER PUMP STATUS
+// ======================================================
+
+onValue(
+    ref(database, "devices/water_pump"),
+    (snapshot) => {
+
+        updateCoolingCycleState();
+
+    }
+);
+
+
+// ======================================================
+// SPRINKLER TIMER - FIREBASE SYNC
+// ======================================================
+const coolingModeRef = ref(database, "devices/timers/mode");
+const restUntilRef = ref(database, "devices/timers/restUntil");
+
+const sprinklerStartRef = ref(database, "devices/timers/sprinklerStart");
+const fanStartRef = ref(database, "devices/timers/fanStart");
+
+// ======================================================
+// SPRINKLER TIMER - FIREBASE SYNC
+// ======================================================
+ 
+// ======================================================
+// START 5-MINUTE REST AFTER MASTER ON OR COOLING STOP
+// ======================================================
+
+async function startCoolingRestTimer(reason) {
+    // Do not start a rest period when the master is OFF.
+    if (masterStatus !== "ON") {
+        console.log("Master is OFF. Rest timer was not started.");
+        return;
+    }
+
+    automaticRestUntil = Date.now() + AUTOMATIC_REST_DURATION;
+    coolingMode = "rest";
+
+    // Clear the active cooling cycle.
+    sprinklerStart = 0;
+    fanStart = 0;
+
+    coolingActive = false;
+    coolingCycleRunning = false;
+    manualCoolingActive = false;
+
+    automaticCoolingCycle = false;
+    manualCoolingCycle = false;
+    fanCycleStarted = false;
+
+    sprinklerWaitingForFirebase = false;
+    fanWaitingForFirebase = false;
+
+    sprinklerTimerLoadedFromFirebase = false;
+    fanTimerLoadedFromFirebase = false;
+
+    // Stop the physical devices and save the rest timer.
+    await Promise.all([
+        set(ref(database, "devices/stopCooling"), true),
+        set(ref(database, "devices/manualCooling"), false),
+        set(ref(database, "devices/water_pump"), false),
+        set(ref(database, "devices/fan"), false),
+
+        set(sprinklerStartRef, 0),
+        set(fanStartRef, 0),
+        set(restUntilRef, automaticRestUntil),
+        set(coolingModeRef, "rest")
+    ]);
+
+    updateManualCoolingButton(false);
+    updateCountdowns();
+
+    console.log(reason);
+    console.log("5-minute rest started.");
+    console.log(
+        "Rest ends at:",
+        new Date(automaticRestUntil).toLocaleTimeString()
+    );
+}
+// ======================================================
+// RESTORE COOLING STATE FROM FIREBASE BEFORE
+// AUTOMATIC COOLING IS ALLOWED TO START
+// ======================================================
+
+async function initializeCoolingState() {
+
+    try {
+
+        console.log(
+            "Restoring cooling state from Firebase..."
+        );
+
+        // ==================================================
+        // GET MASTER STATUS FIRST
+        // ==================================================
+
+        const masterSnapshot = await get(
+            ref(database, "devices/master/status")
+        );
+
+        const currentMasterStatus =
+            masterSnapshot.exists()
+                ? masterSnapshot.val()
+                : "OFF";
+
+        console.log(
+            "MASTER STATUS DURING INITIALIZATION:",
+            currentMasterStatus
+        );
+
+
+        // ==================================================
+        // MASTER IS OFF
+        // NEVER RESTORE OLD TIMERS
+        // ==================================================
+
+        if (currentMasterStatus !== "ON") {
+
+            console.log(
+                "MASTER IS OFF - CLEARING ALL OLD COOLING STATE."
+            );
+
+            // ----------------------------------------------
+            // CLEAR LOCAL STATE
+            // ----------------------------------------------
+
+            sprinklerStart = 0;
+            fanStart = 0;
+            automaticRestUntil = 0;
+
+            coolingMode = "idle";
+
+            coolingActive = false;
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = false;
+            fanCycleStarted = false;
+
+            sprinklerTimerLoadedFromFirebase = false;
+            fanTimerLoadedFromFirebase = false;
+
+            sprinklerWaitingForFirebase = false;
+            fanWaitingForFirebase = false;
+
+
+            // ----------------------------------------------
+            // CLEAR FIREBASE STATE
+            // ----------------------------------------------
+
+            await Promise.all([
+
+                set(
+                    ref(database, "devices/manualCooling"),
+                    false
+                ),
+
+                set(
+                    ref(database, "devices/water_pump"),
+                    false
+                ),
+
+                set(
+                    ref(database, "devices/fan"),
+                    false
+                ),
+
+                set(
+                    sprinklerStartRef,
+                    0
+                ),
+
+                set(
+                    fanStartRef,
+                    0
+                ),
+
+                set(
+                    restUntilRef,
+                    0
+                ),
+
+                set(
+                    coolingModeRef,
+                    "idle"
+                )
+
+            ]);
+
+
+            // ----------------------------------------------
+            // MARK STATE AS INITIALIZED
+            // ----------------------------------------------
+
+            coolingStateInitialized = true;
+
+
+            // ----------------------------------------------
+            // CLEAR WEBSITE TIMER DISPLAY
+            // ----------------------------------------------
+
+            clearCoolingTimersDisplay();
+
+            updateManualCoolingButton(false);
+
+            console.log(
+                "MASTER OFF - OLD TIMER STATE COMPLETELY CLEARED."
+            );
+
+            return;
+        }
+
+
+        // ==================================================
+        // MASTER IS ON
+        // NOW READ THE COOLING STATE
+        // ==================================================
+
+        const [
+            modeSnapshot,
+            restSnapshot,
+            sprinklerSnapshot,
+            fanSnapshot
+        ] = await Promise.all([
+
+            get(coolingModeRef),
+
+            get(restUntilRef),
+
+            get(sprinklerStartRef),
+
+            get(fanStartRef)
+
+        ]);
+
+
+        // ==================================================
+        // RESTORE MODE
+        // ==================================================
+
+        coolingMode =
+            modeSnapshot.exists()
+                ? modeSnapshot.val()
+                : "idle";
+
+
+        // ==================================================
+        // RESTORE REST TIMER
+        // ==================================================
+
+        automaticRestUntil =
+            restSnapshot.exists()
+                ? Number(restSnapshot.val()) || 0
+                : 0;
+
+
+        // ==================================================
+        // RESTORE SPRINKLER TIMER
+        // ==================================================
+
+        sprinklerStart =
+            sprinklerSnapshot.exists()
+                ? Number(sprinklerSnapshot.val()) || 0
+                : 0;
+
+
+        // ==================================================
+        // RESTORE FAN TIMER
+        // ==================================================
+
+        fanStart =
+            fanSnapshot.exists()
+                ? Number(fanSnapshot.val()) || 0
+                : 0;
+
+
+        // ==================================================
+        // RESTORE COOLING MODE
+        // ==================================================
+
+        if (coolingMode === "automatic") {
+
+            automaticCoolingCycle = true;
+            manualCoolingCycle = false;
+
+            coolingCycleRunning =
+                sprinklerStart > 0 ||
+                fanStart > 0;
+
+            manualCoolingActive =
+                coolingCycleRunning;
+
+            fanCycleStarted =
+                fanStart > 0;
+
+        }
+
+        else if (coolingMode === "manual") {
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = true;
+
+            coolingCycleRunning =
+                sprinklerStart > 0 ||
+                fanStart > 0;
+
+            manualCoolingActive =
+                coolingCycleRunning;
+
+        }
+
+        else if (coolingMode === "rest") {
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = false;
+
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            fanCycleStarted = false;
+
+        }
+
+        else {
+
+            automaticCoolingCycle = false;
+            manualCoolingCycle = false;
+
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            fanCycleStarted = false;
+
+        }
+
+
+        // ==================================================
+        // MARK FIREBASE STATE AS LOADED
+        // ==================================================
+
+        coolingStateInitialized = true;
+
+
+        console.log(
+            "======================================"
+        );
+
+        console.log(
+            "COOLING STATE RESTORED"
+        );
+
+        console.log(
+            "Mode:",
+            coolingMode
+        );
+
+        console.log(
+            "Sprinkler Start:",
+            sprinklerStart
+        );
+
+        console.log(
+            "Fan Start:",
+            fanStart
+        );
+
+        console.log(
+            "Rest Until:",
+            automaticRestUntil
+        );
+
+        console.log(
+            "======================================"
+        );
+
+
+        updateManualCoolingButton(
+            coolingCycleRunning
+        );
+
+        updateCountdowns();
+
+
+        // ==================================================
+        // ONLY CHECK AUTOMATIC COOLING AFTER RESTORATION
+        // ==================================================
+
+        checkAutomaticCooling();
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Failed to restore cooling state:",
+            error
+        );
+
+    }
+
+}
+
+onValue(
+    ref(database, "devices/timers/sprinklerStart"),
+    (snapshot) => {
+
+        const firebaseStart =
+            Number(snapshot.val()) || 0;
+
+        console.log(
+            "Firebase sprinkler timer:",
+            firebaseStart
+        );
+
+        // ==============================================
+        // TIMER IS ACTIVE
+        // ==============================================
+
+        if (firebaseStart > 0) {
+
+            sprinklerStart = firebaseStart;
+
+            sprinklerTimerLoadedFromFirebase = true;
+            sprinklerWaitingForFirebase = false;
+
+            coolingCycleRunning = true;
+            manualCoolingActive = true;
+
+            updateManualCoolingButton(true);
+            updateCountdowns();
+
+            console.log(
+                "Sprinkler timer synchronized with Firebase."
+            );
+
+            return;
+        }
+
+        // ==============================================
+        // FIREBASE SAYS 0
+        // ==============================================
+
+        // Do NOT immediately treat this as a finished
+        // cooling cycle after a page refresh.
+
+        if (!sprinklerTimerLoadedFromFirebase) {
+
+            console.log(
+                "Sprinkler timer not loaded yet. Ignoring Firebase 0."
+            );
+
+            return;
+        }
+
+        // Firebase has officially cleared the timer
+
+        sprinklerStart = 0;
+
+        updateCountdowns();
+
+        console.log(
+            "Firebase sprinkler timer cleared."
+        );
+    }
+);
+
+onValue(coolingModeRef, (snapshot) => {
+
+    const mode = snapshot.val() || "idle";
+
+    coolingMode = mode;
+
+    if (mode === "automatic") {
+
+        automaticCoolingCycle = true;
+        manualCoolingCycle = false;
+
+        if (fanStart > 0) {
+            fanCycleStarted = true;
+        }
+
+    } else if (mode === "manual") {
+
+        automaticCoolingCycle = false;
+        manualCoolingCycle = true;
+
+    } else if (mode === "rest") {
+
+        automaticCoolingCycle = false;
+        manualCoolingCycle = false;
+        fanCycleStarted = false;
+
+    } else {
+
+        automaticCoolingCycle = false;
+        manualCoolingCycle = false;
+        fanCycleStarted = false;
+    }
+
+    updateManualCoolingButton();
+    updateCountdowns();
+});
+
+onValue(restUntilRef, (snapshot) => {
+
+    automaticRestUntil = Number(snapshot.val()) || 0;
+
+    updateCountdowns();
+});
+// ======================================================
+// FAN TIMER - FIREBASE SYNC
+// ======================================================
+
+// ======================================================
+// FAN TIMER - FIREBASE SYNC
+// ======================================================
+
+onValue(
+    ref(database, "devices/timers/fanStart"),
+    (snapshot) => {
+
+        const firebaseStart =
+            Number(snapshot.val()) || 0;
+
+        console.log(
+            "Firebase fan timer:",
+            firebaseStart
+        );
+
+        // ==================================================
+        // FAN TIMER IS ACTIVE
+        // ==================================================
+
+        if (firebaseStart > 0) {
+
+            fanStart = firebaseStart;
+
+            fanTimerLoadedFromFirebase = true;
+            fanWaitingForFirebase = false;
+
+            // ==============================================
+            // DETECT AUTOMATIC FAN CYCLE
+            // ==============================================
+
+            if (
+                coolingMode === "automatic" ||
+                automaticCoolingCycle
+            ) {
+
+                automaticCoolingCycle = true;
+                fanCycleStarted = true;
+
+                console.log(
+                    "Automatic fan cycle restored."
+                );
+            }
+
+            // ==============================================
+            // DETECT MANUAL FAN CYCLE
+            // ==============================================
+
+            if (
+                coolingMode === "manual" ||
+                manualCoolingCycle
+            ) {
+
+                manualCoolingCycle = true;
+
+                console.log(
+                    "Manual fan cycle restored."
+                );
+            }
+
+            coolingCycleRunning = true;
+            manualCoolingActive = true;
+
+            updateManualCoolingButton(true);
+            updateCountdowns();
+
+            console.log(
+                "Fan timer synchronized with Firebase."
+            );
+
+            return;
+        }
+
+        // ==================================================
+        // FIREBASE FAN TIMER = 0
+        // ==================================================
+
+        // IMPORTANT:
+        // Ignore the initial Firebase 0 after refresh.
+        // We must not start REST just because the page
+        // has not received the timer yet.
+
+        if (!fanTimerLoadedFromFirebase) {
+
+            console.log(
+                "Fan timer not loaded yet. Ignoring Firebase 0."
+            );
+
+            return;
+        }
+
+        // ==================================================
+      if (!fanTimerLoadedFromFirebase) {
+
+    console.log(
+        "Fan timer not loaded yet. Ignoring Firebase 0."
+    );
+
+    return;
+}
+
+
+// ==================================================
+// FAN TIMER HAS REALLY BEEN CLEARED
+// ==================================================
+
+fanStart = 0;
+
+console.log(
+    "Firebase fan timer cleared."
+);
+
+
+// ==================================================
+// CHECK MASTER BEFORE DOING ANYTHING ELSE
+// ==================================================
+
+if (masterStatus !== "ON") {
+
+    console.log(
+        "MASTER OFF - FAN TIMER CLEARED."
+    );
+
+    // ... your new Master OFF code ...
+
+    return;
+}
+    
+
+// ==================================================
+// MASTER IS ON
+// FAN TIMER REALLY FINISHED
+// ==================================================
+
+console.log(
+    "MASTER ON - FAN TIMER FINISHED."
+);
+
+
+// ==================================================
+// AUTOMATIC COOLING FINISHED
+// ==================================================
+    
+
+        if (
+            coolingMode === "automatic"
+        ) {
+
+            automaticCoolingCycle = false;
+            fanCycleStarted = false;
+
+            coolingActive = false;
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            // ==============================================
+            // START 5-MINUTE AUTOMATIC REST
+            // ==============================================
+
+            automaticRestUntil =
+                Date.now() + AUTOMATIC_REST_DURATION;
+
+            coolingMode = "rest";
+
+            // Save REST state
+            set(
+                restUntilRef,
+                automaticRestUntil
+            )
+            .then(() => {
+
+                return set(
+                    coolingModeRef,
+                    "rest"
+                );
+
+            })
+            .then(() => {
+
+                console.log(
+                    "AUTOMATIC REST TIMER SAVED TO FIREBASE."
+                );
+
+                console.log(
+                    "Automatic rest will finish at:",
+                    new Date(automaticRestUntil)
+                );
+
+                updateManualCoolingButton(false);
+                updateCountdowns();
+
+            })
+            .catch((error) => {
+
+                console.error(
+                    "Failed to save automatic rest:",
+                    error
+                );
+
+            });
+
+            return;
+        }
+
+        // ==================================================
+        // MANUAL COOLING FINISHED
+        // ==================================================
+
+        if (
+            coolingMode === "manual" ||
+            manualCoolingCycle
+        ) {
+
+            manualCoolingCycle = false;
+
+            coolingActive = false;
+            coolingCycleRunning = false;
+            manualCoolingActive = false;
+
+            // ==============================================
+            // START 5-MINUTE MANUAL REST
+            // ==============================================
+
+            automaticRestUntil =
+                Date.now() + AUTOMATIC_REST_DURATION;
+
+            coolingMode = "rest";
+
+            set(
+                restUntilRef,
+                automaticRestUntil
+            )
+            .then(() => {
+
+                return set(
+                    coolingModeRef,
+                    "rest"
+                );
+
+            })
+            .then(() => {
+
+                console.log(
+                    "MANUAL REST TIMER SAVED TO FIREBASE."
+                );
+
+                console.log(
+                    "Manual rest will finish at:",
+                    new Date(automaticRestUntil)
+                );
+
+                updateManualCoolingButton(false);
+                updateCountdowns();
+
+            })
+            .catch((error) => {
+
+                console.error(
+                    "Failed to save manual rest:",
+                    error
+                );
+
+            });
+
+            // Turn manual cooling OFF
+            set(
+                ref(database, "devices/manualCooling"),
+                false
+            );
+
+            return;
+        }
+    }
+);
+
     </script>
+
+
 
 <style>
  @media (max-width: 800px) {
@@ -535,96 +5918,853 @@ link.click();
                 min-width: 600px;
             }
 
+            
         }
+
 
     </style>
 
 </head>
 <body style="margin: 0; padding: 10px; font-family: Arial, Helvetica, sans-serif;">
-  <div style="text-align:center;">
 
-    <div style="display:flex; justify-content:center; gap:40px;">
+    <!-- login/register -->
+    <div id="loginScreen" style="
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 25px;
+    background: linear-gradient(135deg, #eaf4ff, #f7fbff);
+    box-sizing: border-box;
+">
+
+    <div class="auth-container" style="
+    width: 100%;
+    max-width: 480px;
+    background: white;
+    padding: 45px 40px;
+    border-radius: 22px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.12);
+    box-sizing: border-box;
+    text-align: center;
+    ">
+  <div style="
+    width: 75px;
+    height: 75px;
+    margin: 0 auto 18px;
+    border-radius: 20px;
+    background: #e8f4ff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 42px;
+  ">🐷
+  </div>
+
+        <h1 style="
+        margin: 0;
+        font-size: 28px;
+        color: #16324f;
+        line-height: 1.3;
+    ">
+        IoT Pig Pen Monitoring System
+        </h1>
+
+
+        <p class="auth-subtitle" style="
+        margin: 0 0 30px;
+        color: #6b778c;
+        font-size: 15px;
+        line-height: 1.5;
+        ">
+        Please sign in to access the monitoring dashboard.
+        </p>
+
+
+        <div id="authMessage" style="
+        display: none;
+        width: 100%;
+        margin-bottom: 15px;
+        padding: 11px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        box-sizing: border-box;
+        text-align: center;
+        font-size: 14px;
+        "></div>
+
+
+         <!-- login form -->
+
+        <form
+        id="loginForm"
+        class="auth-form"
+        onsubmit="loginUser(event)"
+        style="
+        display: flex;
+        flex-direction: column;
+        gap: 17px;
+        width: 100%;
+        max-width: 370px;
+        margin: 0 auto;
+        text-align: left;
+            "
+        >
+
+        <!-- Email -->
 
         <div style="
-        background-color:azure; 
-        width:250px; 
-        height:80px; ">
+        width: 100%;
+        ">
+
+        <label
+        for="loginEmail"
+        style="
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #26384f;
+        ">
+        Email
+        </label>
+
+        <input
+        type="email"
+        id="loginEmail"
+        placeholder="Enter your email"
+        required
+        style="
+        display: block;
+        width: 100%;
+        height: 46px;
+        padding: 10px 13px;
+        box-sizing: border-box;
+        border: 1px solid #ccd7e3;
+        border-radius: 9px;
+        font-size: 15px;
+        outline: none;
+        ">
+        </div>
+
+        <!-- Password -->
+
+        <div style="
+        width: 100%;
+        ">
+
+        <label
+        for="loginPassword"
+        style="
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #26384f;
+        ">
+        Password
+        </label>
+
+        <input
+        type="password"
+        id="loginPassword"
+        placeholder="Enter your password"
+        required
+        style="
+        display: block;
+        width: 100%;
+        height: 46px;
+        padding: 10px 13px;
+        box-sizing: border-box;
+        border: 1px solid #ccd7e3;
+        border-radius: 9px;
+        font-size: 15px;
+        outline: none;
+        ">
+
+        </div>
+
+
+        <!-- Login Button -->
+
+        <button
+        type="submit"
+        style="
+        width: 100%;
+        height: 48px;
+        margin-top: 5px;
+        border: none;
+        border-radius: 9px;
+        background: #4169b1;
+        color: white;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        ">
+            Login
+        </button>
+
+        <p style="
+        margin: 8px 0 0;
+        text-align: center;
+        color: #6b778c;
+        font-size: 14px;
+        ">
+        Don't have an account?
+
+        <a
+        href="#"
+        onclick="showRegister(); return false;"
+        style="
+        color: #4169b1;
+        text-decoration: none;
+        font-weight: bold;
+        ">
+        Register
+        </a>
+        </p>
+
+        </form>
+
+
+    <!-- === register form=== -->
+
+    <form
+    id="registerForm"
+    class="auth-form"
+    onsubmit="registerUser(event)"
+    style="
+    display: none;
+    flex-direction: column;
+    gap: 17px;
+    width: 100%;
+    max-width: 370px;
+    margin: 0 auto;
+    text-align: left;
+    ">
+
+    <div style="
+    width: 100%;
+    ">
+
+        <label
+        for="registerEmail"
+        style="
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #26384f;
+        ">
+        Email
+        </label>
+
+        <input
+        id="registerEmail"
+        type="email"
+        placeholder="Enter your email"
+        required
+        style="
+        display: block;
+        width: 100%;
+        height: 46px;
+        padding: 10px 13px;
+        box-sizing: border-box;
+        border: 1px solid #ccd7e3;
+        border-radius: 9px;
+        font-size: 15px;
+        outline: none;
+        ">
+        </div>
+
+
+        <!-- Password -->
+
+        <div style="
+        width: 100%;
+        ">
+
+        <label
+        for="registerPassword"
+        style="
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #26384f;
+        ">
+        Password
+        </label>
+
+        <input
+        id="registerPassword"
+        type="password"
+        placeholder="At least 6 characters"
+        minlength="6"
+        required
+        style="
+        display: block;
+        width: 100%;
+        height: 46px;
+        padding: 10px 13px;
+        box-sizing: border-box;
+        border: 1px solid #ccd7e3;
+        border-radius: 9px;
+        font-size: 15px;
+        outline: none;
+        ">
+
+        </div>
+
+        <div style="
+        width: 100%;
+        ">
+
+        <label
+        for="registerConfirmPassword"
+        style="
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: bold;
+        color: #26384f;
+        ">
+            Confirm Password
+        </label>
+
+        <input
+        id="registerConfirmPassword"
+        type="password"
+        placeholder="Re-enter your password"
+        minlength="6"
+        required
+        style="
+        display: block;
+        width: 100%;
+        height: 46px;
+        padding: 10px 13px;
+        box-sizing: border-box;
+        border: 1px solid #ccd7e3;
+        border-radius: 9px;
+        font-size: 15px;
+        outline: none;
+        ">
+
+        </div>
+
+
+        <!-- Create Account Button -->
+
+        <button
+        type="submit"
+        style="
+        width: 100%;
+        height: 48px;
+        padding: 12px;
+        margin-top: 5px;
+        border: none;
+        border-radius: 6px;
+        background: #4169b1;
+        color: white;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        ">
+        Create Account
+        </button>
+
+
+        <!-- Login Link -->
+
+        <p style="
+        margin: 8px 0 0;
+        text-align: center;
+        color: #6b778c;
+        font-size: 14px;
+        ">
+        Already have an account?
+
+        <a
+        href="#"
+        onclick="showLogin(); return false;"
+        style="
+        color: #4169b1;
+        text-decoration: none;
+        font-weight: bold;
+        ">
+        Login
+         </a>
+        </p>
+
+
+        <!-- Register Error -->
+
+        <div
+        id="registerError"
+        style="
+        color: #d32f2f;
+        margin-top: 5px;
+        text-align: center;
+        font-size: 14px;
+        ">
+
+        </form>
+</div>
+    </div>
+
+</div>
+<!-- dashboard -->
+
+ 
+    <div id="dashboardContent"  style="
+        display: none;
+        background: #f3f7fb;
+        box-sizing: border-box;">
+   
+          <header style="
+           width: 100%;
+        min-height: 75px;
+        background: white;
+        border-bottom: 1px solid #e3eaf2;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 30px;
+        box-sizing: border-box;
+        gap: 20px;
+          " >
+   
+        <div style="
+          display: flex;
+            align-items: center;
+            gap: 12px;"> 
+
+
+            <div style="
+                  width: 48px;
+                height: 48px;
+                border-radius: 13px;
+                background: #e8f4ff;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-size: 28px;
+            ">🐷</div>
+
+        <div style="
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:10px;
+">
+
+    <h2 style="
+    margin: 0;
+    color: #16324f;
+    font-size: 21px;
+    ">
+        IoT Pig Pen Monitoring System
+    </h2>
+
+       </div>
+
+        </div>
+
+    <button
+        onclick="logoutUser()"
+        class="logout-button"
+        style="
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background: #dc3545;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+        "
+    >
+        Logout
+    </button>
+
+
+
+ </header>
+
+ <main id="normalDashboard" style="
+  width: 100%;
+    max-width: 1250px;
+    margin: 0 auto;
+    padding: 30px 25px 50px;
+    box-sizing: border-box;
+">
+
+    <!-- card for humi and temp -->
+    <div style="
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        margin-bottom: 25px;
+    ">
+
+        <!-- Temperature -->
+        <div style="
+            background: white;
+            border-radius: 16px;
+            border: 1px solid #040404;
+        ">
+
+            <div style="
+            display: flex;
+            align-items: center;
+            color: #6b778c;
+            font-size: 30px;
+            ">
+                <span style="
+                font-size: 35px;
+                ">
+                🌡️
+                </span>
+
+            Temperature:
+            </div>
+
             <h2 id="temperature" style="
                 text-align: center;
                 display: flex;
                 justify-content: center;
-                gap: 40px;">
-                Temperature
+                align-items: center;
+                margin: 20px 0 8px;
+                font-size: 34px;
+                color: #16324f;
+            ">
+                -- °C
             </h2>
-           
+
         </div>
 
+
+        <!-- Humidity -->
         <div style="
-        background-color:azure; 
-        width:250px; 
-        height:80px; 
-         display: flex;
-        justify-content: center;
-        align-items: center;">
-            <h2 id="humidity" style="text-align: center;">Humidity</h2>
+            background: white;
+            border-radius: 16px;
+            border: 1px solid #040404;
+            
+        ">
+
+            <div style="
+                display: flex;
+                align-items: center;
+                color: #6b778c;
+                font-size: 30px;
+                
+            ">
+
+                <span style="
+                    font-size: 35px;
+                ">
+                    💧
+                </span>
+
+                Humidity:
+
+            </div>
+
+            <h2 id="humidity" style="
+                text-align: center;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+       
+                font-size: 25px;
+                color: #16324f;
+            ">
+                -- %
+            </h2>
+
         </div>
 
     </div>
-   
 
 
-<div style="text-align: center; margin-top: 10px;">
-   
-
-<div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 10px;">
-
-    <button onclick="showThreshold()" style="
-        padding: 10px 25px;
+    <!-- BUTTONS -->
+    <div style="
         display: flex;
         justify-content: center;
         align-items: center;
         gap: 10px;
-        flex-wrap: wrap;">
-        Set Threshold
+        margin-top: 10px;
+        margin-bottom: 25px;
+    ">
+
+        <button onclick="showThreshold()" style="
+            padding: 13px 25px;
+            border: 1px solid #d5dce5;
+            border-radius: 9px;
+            background: white;
+            color: #16324f;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+        ">
+            Set Threshold
+        </button>
+
+
+        <button  id="manualCoolingButton"
+    onclick="manualCooling()" style="
+            padding: 13px 25px;
+            border-radius: 9px;
+            color: rgb(0, 0, 0);
+            font-size: 15px;
+            font-weight: bold;
+
+        ">
+            💦 Activate Sprinkler & Fan 💨
+        </button>
+
+<div style="
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 20px 0;
+">
+
+    <button
+        id="masterButton"
+        style="
+            width: 240px;
+            height: 78px;
+
+            background-color: white;
+
+            border: 1.5px solid black;
+            border-radius: 18px;
+
+            font-size: 20px;
+            font-weight: bold;
+
+            color: #0b3b66;
+
+            cursor: pointer;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            gap: 6px;
+
+            transition: 0.2s;
+        "
+    >
+
+        <span>Master:</span>
+
+        <span
+            id="masterStatus"
+            style="
+                color: #6f7780;
+            "
+        >
+            OFF
+        </span>
+
     </button>
 
-    <button onclick="manualCooling()" style="
-    padding: 10px 25px;
-     display: flex;
+</div>
+
+    </div>
+
+
+   <div style="
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+">
+
+    <!-- Fan Status -->
+    <div id="fanStatus" style="
+        width: 170px;
+        height: 60px;
+        background: white;
+        border: 1px solid #040404;
+        border-radius: 16px;
+        display: flex;
         justify-content: center;
         align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;">
-        Activate Sprinkler & Fan
-    </button>
+        gap: 8px;
+        margin-top: 10px;
+    ">
 
-</div>
+        <h4 style="
+            margin: 0;
+            color: #16324f;
+        ">
+            Fan:
+        </h4>
 
-<div style="display: flex; justify-content: center; align-items: center; gap: 10px;">
+        <span id="fanState" style="
+            font-weight: bold;
+            color: #6b778c;
+        ">
+            OFF
+        </span>
 
-    <div id="fanStatus" style="
-    width: 150px; 
-    height: 40px; 
-    background: azure; 
-    margin-top: 10px;
-        justify-content: center; 
-        align-items: center; 
-        display: flex;">
-        <h4>Fan Status:</h4>
     </div>
 
+
+    <!-- Sprinkler Status -->
     <div id="sprinklerStatus" style="
-    width: 150px; 
-    height: 40px; 
-    background: azure; 
-    margin-top: 10px;
-    justify-content: center; 
-    align-items: center; 
-    display: flex;">
-        <h4>Sprinkler Status:</h4>
+        width: 190px;
+        height: 60px;
+        background: white;
+        border: 1px solid #040404;
+        border-radius: 16px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+    ">
+
+        
+
+        <h4 style="
+            margin: 0;
+            color: #16324f;
+        ">
+            Sprinkler:
+        </h4>
+
+        <span id="sprinklerState" style="
+            font-weight: bold;
+            color: #6b778c;
+        ">
+            OFF
+        </span>
+
+    </div>
+<!-- COOLING TIMER DISPLAY -->
+<div style="
+    display:flex;
+    justify-content:center;
+    gap:20px;
+    flex-wrap:wrap;
+    margin:20px 0;
+">
+
+    <!-- Sprinkler Timer -->
+    <div id="sprinklerTimerCard" style="
+        width:240px;
+        background:white;
+        border:1.5px solid black;
+        border-radius:18px;
+        padding:18px;
+        text-align:center;
+        display:none;
+    ">
+        <div style="
+            font-size:18px;
+            font-weight:bold;
+            color:#0b3b66;
+            margin-bottom:8px;
+        ">
+            Sprinkler Timer
+        </div>
+
+        <div id="sprinklerCountdown" style="
+            font-size:32px;
+            font-weight:bold;
+            color:#0b3b66;
+        ">
+            01:30
+        </div>
+
+        <div style="
+            font-size:13px;
+            color:#666;
+            margin-top:5px;
+        ">
+            Remaining
+        </div>
     </div>
 
+
+    <!-- Fan Timer -->
+    <div id="fanTimerCard" style="
+        width:240px;
+        background:white;
+        border:1.5px solid black;
+        border-radius:18px;
+        padding:18px;
+        text-align:center;
+        display:none;
+    ">
+        <div style="
+            font-size:18px;
+            font-weight:bold;
+            color:#0b3b66;
+            margin-bottom:8px;
+        ">
+            Fan Timer
+        </div>
+
+        <div id="fanCountdown" style="
+            font-size:32px;
+            font-weight:bold;
+            color:#0b3b66;
+        ">
+            15:00
+        </div>
+
+        <div style="
+            font-size:13px;
+            color:#666;
+            margin-top:5px;
+        ">
+            Remaining
+        </div>
+    </div>
+<!-- Automatic Rest Timer -->
+<div id="automaticRestTimerCard" style="
+    width:240px;
+    background:white;
+    border:1.5px solid black;
+    border-radius:18px;
+    padding:18px;
+    text-align:center;
+    display:none;
+">
+    <div style="
+        font-size:18px;
+        font-weight:bold;
+        color:#8a4b08;
+        margin-bottom:8px;
+    ">
+        Automatic Rest Timer
+    </div>
+
+    <div id="automaticRestCountdown" style="
+        font-size:32px;
+        font-weight:bold;
+        color:#8a4b08;
+    ">
+        00:20
+    </div>
+
+    <div style="
+        font-size:13px;
+        color:#666;
+        margin-top:5px;
+    ">
+        Remaining
+    </div>
 </div>
+</div>
+</div>
+
 
   <div id="thresholdBox" style="
   display: none;
@@ -639,7 +6779,35 @@ link.click();
   box-shadow: 0 4px 15px #999;
   text-align: center;">
 
-<h3>Setting Threshold</h3>
+ <div style="
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+">
+    <h3 style="
+        margin: 0;
+        color: #16324f;
+        font-size: 18px;
+    ">Setting Threshold</h3>
+
+    <button
+        type="button"
+        onclick="closeThreshold()"
+        style="
+            background: #dc2626;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            width: 32px;
+            height: 32px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+        "
+        aria-label="Close threshold form"
+    >×</button>
+</div>
 
 <label> Temperature</label>
 <input type="number" id="tempThreshold"  placeholder="°C" style="width: 80px; padding: 5px;">
@@ -651,20 +6819,26 @@ link.click();
 
 <br> <br>
 
+<div style="
+    display: flex;
+    justify-content: center;
+    align-items: center;
+">
+
 <button onclick="saveThreshold()" style="
 padding: 8px 20px; 
 border: 0; 
 border-radius: 6px; 
 cursor: pointer;
  display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;">
-    Save Threshold
+justify-content: center;
+align-items: center;
+gap: 10px;
+flex-wrap: wrap;">
+Save Threshold
 </button>
 </div>
-
+</div>
 <h3 style="text-align: center; margin-top: 25px;">
     Activation History
 </h3>
@@ -674,8 +6848,8 @@ display: flex;
 justify-content: center; 
 gap: 10px; 
 margin-bottom: 15px;
-width:0 auto;
-width: 80%;">
+align-items: center;
+">
 
 <button onclick="showRecord ('daily')" style="
     padding: 8px 20px;
@@ -755,13 +6929,311 @@ padding: 8px 20px;
 
 </div>
 
+
+</div>
+</main>
+
+<!--admin dashboard--> 
+<div id="adminPanel" style="
+    display:none;
+    width:100%;
+    max-width:1250px;
+    margin:0 auto;
+    padding:30px 25px 50px;
+    box-sizing:border-box;
+">
+
+    <h2 style="
+        text-align:center;
+        margin-bottom:30px;
+    ">
+        🐷 Admin Panel
+    </h2>
+
+    <div style="
+        background:white;
+        padding:20px;
+        border-radius:15px;
+        box-shadow:0 4px 15px rgba(0,0,0,0.08);
+        margin-bottom:30px;
+    ">
+
+        <h3>👥 User Accounts</h3>
+
+        <div style="overflow-x:auto;">
+
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+                margin-top:15px;
+            ">
+
+                <thead>
+                <tr style="background:#f1f5f9;">
+                <th style="padding:12px; text-align:left;">
+    Role
+</th>
+
+<th style="padding:12px; text-align:left;">
+    Status
+</th>
+
+<th style="padding:12px; text-align:left;">
+    Action
+</th>
+                </tr>
+                </thead>
+
+                <tbody id="userTable">
+
+                <tr>
+                <td colspan="4" style="
+                padding:20px;
+                text-align:center;
+                ">
+                Loading users...
+                </td>
+        </tr>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
+
+    <!-- LOGIN HISTORY -->
+    <div style="
+        background:white;
+        padding:20px;
+        border-radius:15px;
+        box-shadow:0 4px 15px rgba(0,0,0,0.08);
+    ">
+<!-- ACTIVATION ANALYTICS -->
+<div style="
+    background:white;
+    padding:20px;
+    border-radius:15px;
+    box-shadow:0 4px 15px rgba(0,0,0,0.08);
+    margin-bottom:30px;
+">
+
+    <h3>📊 Activation Analytics</h3>
+
+    <div style="
+        display:flex;
+        justify-content:flex-start;
+        align-items:stretch;
+        gap:20px;
+        flex-wrap:wrap;
+        margin-top:15px;
+    ">   
+
+            <p style="
+                margin:0;
+                color:#777;
+                font-size:14px;
+            ">
+                All recorded activations
+            </p>
+
+        </div>
+
+
+   <!-- TEMPERATURE & HUMIDITY ANALYTICS -->
+<div style="
+    background:#f8fafc;
+    padding:20px;
+    border-radius:12px;
+    width:100%;
+    box-sizing:border-box;
+    margin-top:20px;
+">
+
+    <h4 style="
+        margin:0 0 10px 0;
+        text-align:center;
+    ">
+        🌡️ Temperature & Humidity Analytics
+    </h4>
+
+    <!-- SELECTED DATE -->
+    <div style="
+        text-align:center;
+        margin:20px 0;
+    ">
+
+        <strong>
+            Selected Date:
+        </strong>
+
+        <span
+            id="selectedEnvironmentDate"
+            style="
+                color:#2563eb;
+                font-weight:bold;
+            "
+        >
+            No date selected
+        </span>
+
+    </div>
+
+
+    <!-- 24-HOUR TEMPERATURE & HUMIDITY GRAPH -->
+    <div style="
+        position:relative;
+        width:100%;
+        height:500px;
+    ">
+
+        <canvas id="temperatureHumidityChart"></canvas>
+
+    </div>
+
+
+    <!-- DAILY ENVIRONMENTAL RECORDS -->
+    <div style="
+        margin-top:30px;
+    ">
+
+        <h4 style="
+            margin:0 0 15px 0;
+            text-align:center;
+        ">
+            📅 Daily Environmental Records
+        </h4>
+
+        <div style="
+            overflow-x:auto;
+        ">
+
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+                background:white;
+            ">
+
+                <thead>
+
+                    <tr style="
+                        background:#e2e8f0;
+                    ">
+
+                        <th style="
+                            padding:12px;
+                            text-align:left;
+                        ">
+                            Date
+                        </th>
+
+                        <th style="
+                            padding:12px;
+                            text-align:center;
+                        ">
+                            Average Temperature
+                        </th>
+
+                        <th style="
+                            padding:12px;
+                            text-align:center;
+                        ">
+                            Average Humidity
+                        </th>
+
+                        <th style="
+                            padding:12px;
+                            text-align:center;
+                        ">
+                            Action
+                        </th>
+
+                    </tr>
+
+                </thead>
+
+
+                <tbody id="dailyEnvironmentTable">
+
+                    <tr>
+
+                        <td
+                            colspan="4"
+                            style="
+                                padding:20px;
+                                text-align:center;
+                                color:#777;
+                            "
+                        >
+                            Loading environmental records...
+
+                        </td>
+
+                    </tr>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </div>
+
 </div>
 
+</div>
+        <h3>🔐 Login History</h3>
 
+        <div style="overflow-x:auto;">
 
+            <table style="
+                width:100%;
+                border-collapse:collapse;
+                margin-top:15px;
+            ">
 
+                <thead>
+                <tr style="background:#f1f5f9;">
 
+                <th style="padding:12px; text-align:left;">
+                    Email
+                </th>
 
+                <th style="padding:12px; text-align:left;">
+                    Role
+                </th>
+
+                <th style="padding:12px; text-align:left;">
+                    Date
+                </th>
+
+                <th style="padding:12px; text-align:left;">
+                    Time
+                </th>
+
+                    </tr>
+                </thead>
+
+                <tbody id="loginTable">
+
+    <tr>
+    <td colspan="4" style="
+    padding:20px;
+    text-align:center;
+    ">
+    Loading login history...
+    </td>
+    </tr>
+
+    </tbody>
+
+    </table>
+
+    </div>
+
+    </div>
 
 </div>
 </body>
