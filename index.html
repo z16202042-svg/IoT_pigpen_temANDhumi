@@ -5880,49 +5880,162 @@ console.log(
 
 
 <style>
- @media (max-width: 800px) {
+/* MOBILE RESPONSIVE LAYOUT */
+@media screen and (max-width: 800px) {
 
-            body {
-                padding: 5px;
-            }
+    * {
+        box-sizing: border-box;
+    }
 
-            .sensor-container {
-                flex-direction: column;
-                align-items: center;
-                gap: 10px;
-            }
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+        overflow-x: hidden;
+    }
 
-            .sensor-box {
-                width: 95%;
-                max-width: 350px;
-            }
+    body {
+        font-size: 14px;
+    }
 
-            .button-container {
-                flex-direction: column;
-            }
+    /* Main page containers */
+    #loginScreen,
+    #dashboardContent,
+    #normalDashboard,
+    #adminPanel {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 auto !important;
+        padding: 12px !important;
+        box-sizing: border-box !important;
+    }
 
-            .button-container button {
-                width: 90%;
-            }
+    /* Login and registration cards */
+    .auth-container {
+        width: 100% !important;
+        max-width: 420px !important;
+        padding: 24px 18px !important;
+        margin: 0 auto !important;
+    }
 
-            .status-container {
-                flex-direction: column;
-            }
+    .auth-container h1 {
+        font-size: 23px !important;
+        overflow-wrap: anywhere;
+    }
 
-            .history-container {
-                width: 100%;
-                overflow-x: auto;
-            }
+    .auth-form {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
 
-            .history-table {
-                min-width: 600px;
-            }
+    /* Sensor cards */
+    .sensor-container {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+        gap: 12px;
+    }
 
-            
+    .sensor-box {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 auto;
+    }
+
+    /* Buttons */
+    .button-container {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        width: 100%;
+    }
+
+    .button-container button,
+    #manualCoolingButton,
+    #masterButton {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-height: 44px;
+        padding: 12px !important;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    /* Status and timer cards */
+    .status-container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+    }
+
+    #sprinklerTimerCard,
+    #fanTimerCard,
+    #automaticRestTimerCard {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    /* History table: allow horizontal scrolling inside its area */
+    .history-container {
+        display: block;
+        width: 100% !important;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .history-table {
+        min-width: 600px;
+        width: 100%;
+    }
+
+    /* Make form fields fit the phone */
+    input,
+    select,
+    textarea {
+        max-width: 100%;
+        min-width: 0;
+        font-size: 16px;
+    }
+
+    /* Prevent long words and headings from expanding the page */
+    h1,
+    h2,
+    h3,
+    p,
+    label {
+        overflow-wrap: anywhere;
+    }
+
+    img,
+    canvas {
+        max-width: 100%;
+    }
+
+    /* Smaller phones */
+    @media screen and (max-width: 400px) {
+        #loginScreen,
+        #dashboardContent,
+        #normalDashboard,
+        #adminPanel {
+            padding: 8px !important;
         }
 
+        .auth-container {
+            padding: 20px 14px !important;
+        }
 
-    </style>
+        .auth-container h1 {
+            font-size: 21px !important;
+        }
+    }
+}
+</style>
 
 </head>
 <body style="margin: 0; padding: 10px; font-family: Arial, Helvetica, sans-serif;">
