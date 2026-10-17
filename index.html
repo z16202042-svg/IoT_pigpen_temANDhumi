@@ -5881,50 +5881,105 @@ console.log(
 
 <style>
 
-/* FORCE THE DASHBOARD TO FIT MOBILE SCREENS */
-@media only screen and (max-width: 800px) {
-    html,
-    body {
+
+/* ACTUAL DASHBOARD MOBILE FIX */
+@media screen and (max-width: 600px) {
+
+    #normalDashboard {
         width: 100% !important;
-        min-width: 0 !important;
         max-width: 100% !important;
+        padding: 12px !important;
         margin: 0 !important;
-        padding: 0 !important;
-        overflow-x: hidden !important;
+        box-sizing: border-box !important;
     }
 
-    #normalDashboard,
-    #dashboardContent,
-    #adminPanel {
+    /* Stack Temperature and Humidity vertically */
+    #normalDashboard > div:nth-of-type(1) {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) !important;
+        width: 100% !important;
+        gap: 14px !important;
+    }
+
+    #normalDashboard > div:nth-of-type(1) > div {
         width: 100% !important;
         min-width: 0 !important;
-        max-width: 100% !important;
-        margin: 0 !important;
         padding: 12px !important;
         box-sizing: border-box !important;
-        overflow-x: hidden !important;
     }
 
-    #normalDashboard * {
-        max-width: 100%;
-        box-sizing: border-box;
+    #normalDashboard #temperature,
+    #normalDashboard #humidity {
+        width: 100% !important;
+        min-width: 0 !important;
+        font-size: 24px !important;
+        overflow-wrap: anywhere !important;
     }
 
-    #normalDashboard button {
+    /* Sensor labels */
+    #normalDashboard > div:nth-of-type(1) > div > div {
+        font-size: 20px !important;
+        flex-wrap: wrap !important;
+        overflow-wrap: anywhere !important;
+    }
+
+    /* Set Threshold, Activate, and Master controls */
+    #normalDashboard > div:nth-of-type(2) {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        width: 100% !important;
+        gap: 12px !important;
+    }
+
+    #normalDashboard > div:nth-of-type(2) > button {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        height: auto !important;
+        min-height: 52px;
+        padding: 12px !important;
+        font-size: 16px !important;
         white-space: normal !important;
-        overflow-wrap: anywhere;
+        overflow-wrap: anywhere !important;
     }
 
+    #normalDashboard > div:nth-of-type(2) > div {
+        width: 100% !important;
+        margin: 0 !important;
+        display: flex !important;
+    }
+
+    #normalDashboard #masterButton {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 60px !important;
+        min-width: 0 !important;
+        font-size: 18px !important;
+        white-space: nowrap !important;
+    }
+
+    /* Fan and Sprinkler status cards */
+    #normalDashboard #fanStatus,
+    #normalDashboard #sprinklerStatus {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    #normalDashboard > div:nth-of-type(3) {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        gap: 10px !important;
+    }
+
+    /* Keep history inside the screen */
     #normalDashboard table {
         max-width: 100%;
     }
-
-    #normalDashboard h1,
-    #normalDashboard h2,
-    #normalDashboard h3 {
-        overflow-wrap: anywhere;
-    }
 }
+
 
 </style>
 
