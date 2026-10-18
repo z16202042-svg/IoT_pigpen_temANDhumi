@@ -2881,8 +2881,13 @@ function saveActivation(temperature, humidity) {
 
     set(newRecord, {
 
-        date: now.toLocaleDateString(),
-        time: now.toLocaleTimeString(),
+        date: now.toLocaleDateString("en-US"),
+time: now.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+}),
 
         temperature: temperature,
         humidity: humidity,
@@ -4371,19 +4376,29 @@ window.showRecord = function(filter) {
     // DISPLAY RECORDS
     // ==================================================
 
-    records.forEach(item => {
+   records.forEach(item => {
 
-        table.innerHTML += `
+    // Format the record's time consistently using its timestamp
+    const formattedTime = item.timestamp
+        ? new Date(Number(item.timestamp)).toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true
+        })
+        : (item.time || "");
 
-            <tr>
+    table.innerHTML += `
 
-                <td style="padding: 10px;">
-                    ${item.date || ""}
-                </td>
+        <tr>
 
-                <td style="padding: 10px;">
-                    ${item.time || ""}
-                </td>
+            <td style="padding: 10px;">
+                ${item.date || ""}
+            </td>
+
+            <td style="padding: 10px;">
+                ${formattedTime}
+            </td>
 
                 <td style="padding: 10px;">
                     ${item.temperature ?? ""}
