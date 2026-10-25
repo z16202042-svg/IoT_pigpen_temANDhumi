@@ -276,7 +276,7 @@ function clearCoolingTimersDisplay() {
     }
 
     if (sprinklerDisplay) {
-        sprinklerDisplay.textContent = "01:30";
+        sprinklerDisplay.textContent = "02:30";
     }
 
     // Hide fan timer
@@ -890,7 +890,7 @@ let fanStart = 0;
 
 let automaticRestUntil = 0;
 
-// TEST ONLY: 20 seconds
+// TEST ONLY: 5 mins
 const AUTOMATIC_REST_DURATION = 5 * 60 * 1000;
 
 // Track the automatic cooling cycle
@@ -904,12 +904,13 @@ let fanWaitingForFirebase = true;
 
 // ==================================================
 // PREVENT FALSE "TIMER FINISHED" DETECTION
-// ==================================================
+// ==================================.
+// ================
 
 let sprinklerTimerLoadedFromFirebase = false;
 let fanTimerLoadedFromFirebase = false;
 
-const SPRINKLER_DURATION = 90 * 1000; // 3 minutes
+const SPRINKLER_DURATION = 159 * 1000; // 3 minutes
 const FAN_DURATION = 15 * 60 * 1000;      // 15 minutes
 
 let coolingStateInitialized = false;
@@ -4639,7 +4640,7 @@ function updateCountdowns() {
         }
 
         if (sprinklerDisplay) {
-            sprinklerDisplay.textContent = "01:30";
+            sprinklerDisplay.textContent = "02:30";
         }
 
         if (fanCard) {
@@ -4723,7 +4724,7 @@ if (masterStatus !== "ON") {
 
     // Hide sprinkler timer
     sprinklerTimerCard.style.display = "none";
-    sprinklerCountdown.textContent = "01:30";
+    sprinklerCountdown.textContent = "02:30";
 
     // Hide fan timer
     fanTimerCard.style.display = "none";
@@ -4764,7 +4765,7 @@ if (masterStatus !== "ON") {
         "none";
 
     sprinklerCountdown.textContent =
-        "01:30";
+        "02:30";
 
 }
 
@@ -4774,7 +4775,7 @@ if (masterStatus !== "ON") {
             "none";
 
         sprinklerCountdown.textContent =
-            "01:30";
+            "02:30";
     }
 
 
@@ -6716,7 +6717,7 @@ height: 60px;
             font-weight:bold;
             color:#0b3b66;
         ">
-            01:30
+            02:30
         </div>
 
         <div style="
