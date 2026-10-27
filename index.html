@@ -304,7 +304,7 @@ if (automaticRestTimerCard) {
 }
 
 if (automaticRestCountdown) {
-    automaticRestCountdown.textContent = "05:00";
+    automaticRestCountdown.textContent = "25:00";
 }
     // Reset cooling states
     coolingCycleRunning = false;
@@ -891,7 +891,7 @@ let fanStart = 0;
 let automaticRestUntil = 0;
 
 // TEST ONLY: 5 mins
-const AUTOMATIC_REST_DURATION = 5 * 60 * 1000;
+const AUTOMATIC_REST_DURATION = 25 * 60 * 1000;
 
 // Track the automatic cooling cycle
 let automaticCoolingCycle = false;
@@ -910,7 +910,7 @@ let fanWaitingForFirebase = true;
 let sprinklerTimerLoadedFromFirebase = false;
 let fanTimerLoadedFromFirebase = false;
 
-const SPRINKLER_DURATION = 159 * 1000; // 3 minutes
+const SPRINKLER_DURATION = 150 * 1000; // 3 minutes
 const FAN_DURATION = 15 * 60 * 1000;      // 15 minutes
 
 let coolingStateInitialized = false;
@@ -976,7 +976,7 @@ onValue(
             }
 
             if (restCountdown) {
-                restCountdown.textContent = "05:00";
+                restCountdown.textContent = "25:00";
             }
 
             // Update manual cooling state.
@@ -4656,7 +4656,7 @@ function updateCountdowns() {
         }
 
         if (restDisplay) {
-            restDisplay.textContent = "05:00";
+            restDisplay.textContent = "25:00";
         }
 
         updateManualCoolingButton(false);
@@ -4732,7 +4732,7 @@ if (masterStatus !== "ON") {
 
     // Hide REST timer
     automaticRestTimerCard.style.display = "none";
-    automaticRestCountdown.textContent = "05:00";
+    automaticRestCountdown.textContent = "25:00";
 
     updateManualCoolingButton(false);
 
@@ -4960,7 +4960,7 @@ if (automaticRestUntil > 0) {
         "none";
 
     automaticRestCountdown.textContent =
-        "05:00";
+        "25:00";
 
     console.log(
         "======================================"
@@ -5036,7 +5036,7 @@ else {
         "none";
 
     automaticRestCountdown.textContent =
-        "05:00";
+        "25:00";
 }
 }
 
